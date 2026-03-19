@@ -187,7 +187,7 @@ export class HttpServerService {
       }
       .layout {
         display: grid;
-        grid-template-columns: minmax(0, 1.6fr) minmax(420px, 1fr);
+        grid-template-columns: 1fr;
         gap: 12px;
       }
       .panel {
@@ -374,7 +374,7 @@ export class HttpServerService {
           <h1>TensorFlow API dashboard</h1>
           <div class="toolbar-note">Live state from <span class="mono">/api/state</span>. Auto-refresh every 5 seconds.</div>
         </div>
-        <div>
+        <div style="display: flex; align-items: center; gap: 12px;">
           <span id="feedback" class="feedback">Loading state…</span>
           <button id="refresh-button" type="button">Refresh</button>
         </div>
