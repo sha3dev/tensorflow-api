@@ -86,24 +86,21 @@ export class HttpServerService {
     <style>
       :root {
         color-scheme: light;
-        --bg: radial-gradient(circle at top left, rgba(255, 177, 122, 0.22), transparent 32%),
-          radial-gradient(circle at top right, rgba(58, 124, 255, 0.18), transparent 30%),
-          linear-gradient(160deg, #f5f1e8 0%, #eaf1ff 54%, #f6fbf8 100%);
-        --surface: rgba(255, 255, 255, 0.8);
-        --surface-strong: rgba(255, 255, 255, 0.94);
-        --line: rgba(33, 43, 67, 0.12);
-        --line-strong: rgba(33, 43, 67, 0.2);
-        --ink: #1d2433;
-        --muted: #667085;
+        --bg: #f4f6f9;
+        --surface: #ffffff;
+        --surface-soft: #f8fafc;
+        --line: #d8dee8;
+        --line-strong: #c3ccd8;
+        --ink: #16202f;
+        --muted: #5d6b82;
         --accent: #0f5bd8;
-        --accent-soft: rgba(15, 91, 216, 0.1);
         --success: #0f8a5f;
         --success-soft: rgba(15, 138, 95, 0.12);
         --danger: #c03f2f;
         --danger-soft: rgba(192, 63, 47, 0.12);
         --warning: #a26400;
         --warning-soft: rgba(162, 100, 0, 0.12);
-        --shadow: 0 22px 60px rgba(25, 38, 71, 0.12);
+        --shadow: 0 8px 24px rgba(18, 30, 52, 0.06);
       }
       * {
         box-sizing: border-box;
@@ -111,14 +108,14 @@ export class HttpServerService {
       body {
         margin: 0;
         min-height: 100vh;
-        font-family: "Avenir Next", "Segoe UI", sans-serif;
-        background: var(--bg);
+        font-family: "Inter", "Segoe UI", sans-serif;
+        background: linear-gradient(180deg, #f8fafc 0%, var(--bg) 100%);
         color: var(--ink);
       }
       main {
-        max-width: 1320px;
+        max-width: 1460px;
         margin: 0 auto;
-        padding: 28px 18px 52px;
+        padding: 16px 16px 28px;
       }
       a {
         color: inherit;
@@ -129,158 +126,95 @@ export class HttpServerService {
       }
       .shell {
         display: grid;
-        gap: 18px;
-      }
-      .hero {
-        display: grid;
-        gap: 18px;
-        padding: 28px;
-        border: 1px solid var(--line);
-        border-radius: 28px;
-        background: linear-gradient(140deg, rgba(255, 255, 255, 0.86), rgba(255, 248, 238, 0.82));
-        box-shadow: var(--shadow);
-        overflow: hidden;
-        position: relative;
-      }
-      .hero::after {
-        content: "";
-        position: absolute;
-        inset: auto -6% -28% auto;
-        width: 320px;
-        height: 320px;
-        border-radius: 50%;
-        background: radial-gradient(circle, rgba(15, 91, 216, 0.2), transparent 68%);
-        pointer-events: none;
-      }
-      .hero-grid {
-        display: grid;
-        grid-template-columns: minmax(0, 1.8fr) minmax(280px, 1fr);
-        gap: 20px;
-        align-items: start;
-      }
-      .hero-kicker {
-        display: inline-flex;
-        align-items: center;
-        gap: 8px;
-        width: fit-content;
-        padding: 8px 12px;
-        border-radius: 999px;
-        background: rgba(255, 255, 255, 0.72);
-        border: 1px solid rgba(15, 91, 216, 0.14);
-        color: var(--accent);
-        font-size: 12px;
-        font-weight: 700;
-        letter-spacing: 0.08em;
-        text-transform: uppercase;
-      }
-      .hero-title {
-        font-family: "Canela", "Iowan Old Style", "Palatino Linotype", serif;
-        font-size: clamp(2.4rem, 4vw, 4.5rem);
-        line-height: 0.95;
-        letter-spacing: -0.04em;
-      }
-      .hero-copy {
-        max-width: 720px;
-        font-size: 1rem;
-        line-height: 1.65;
-      }
-      .hero-stack {
-        display: grid;
-        gap: 14px;
-      }
-      .hero-meta {
-        display: grid;
         gap: 12px;
-        padding: 18px;
-        border-radius: 22px;
-        background: rgba(25, 38, 71, 0.92);
-        color: #f5f7fb;
-      }
-      .hero-meta-label {
-        color: rgba(245, 247, 251, 0.72);
-        font-size: 12px;
-        font-weight: 700;
-        letter-spacing: 0.08em;
-        text-transform: uppercase;
-      }
-      .hero-meta-value {
-        font-size: 1.05rem;
-        line-height: 1.45;
       }
       .toolbar {
-        display: flex;
-        flex-wrap: wrap;
-        justify-content: space-between;
-        gap: 12px;
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) auto;
+        gap: 10px 16px;
         align-items: center;
-        padding: 16px 18px;
-        border-radius: 20px;
-        background: var(--surface);
+        padding: 12px 14px;
+        border-radius: 14px;
+        background: var(--surface-soft);
         border: 1px solid var(--line);
-        box-shadow: 0 12px 30px rgba(25, 38, 71, 0.06);
+        box-shadow: var(--shadow);
+      }
+      .toolbar-title {
+        display: grid;
+        gap: 2px;
+      }
+      .toolbar-title h1 {
+        font-size: 1rem;
+        font-weight: 700;
+        letter-spacing: -0.02em;
+      }
+      .toolbar-note {
+        color: var(--muted);
+        font-size: 0.85rem;
       }
       .cards {
         display: grid;
-        grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
-        gap: 14px;
+        grid-template-columns: repeat(4, minmax(0, 1fr));
+        gap: 10px;
       }
       .card,
       .panel {
         background: var(--surface);
         border: 1px solid var(--line);
-        border-radius: 24px;
-        backdrop-filter: blur(16px);
+        border-radius: 14px;
       }
       .card {
-        padding: 18px;
-        box-shadow: 0 18px 36px rgba(25, 38, 71, 0.07);
+        padding: 12px 14px;
+        box-shadow: var(--shadow);
       }
       .card-label {
         color: var(--muted);
-        font-size: 12px;
+        font-size: 11px;
         font-weight: 700;
-        letter-spacing: 0.08em;
+        letter-spacing: 0.04em;
         text-transform: uppercase;
       }
       .card strong {
         display: block;
-        margin-top: 12px;
-        font-size: clamp(2rem, 3vw, 2.9rem);
-        letter-spacing: -0.05em;
+        margin-top: 8px;
+        font-size: 2rem;
+        letter-spacing: -0.04em;
       }
       .card-foot {
-        margin-top: 10px;
+        margin-top: 4px;
         color: var(--muted);
-        font-size: 0.92rem;
+        font-size: 0.8rem;
       }
       .layout {
         display: grid;
-        grid-template-columns: minmax(0, 1.45fr) minmax(320px, 0.95fr);
-        gap: 18px;
+        grid-template-columns: minmax(0, 1.6fr) minmax(420px, 1fr);
+        gap: 12px;
       }
       .panel {
         overflow: hidden;
-        box-shadow: 0 18px 40px rgba(25, 38, 71, 0.07);
+        box-shadow: var(--shadow);
       }
       .panel-header {
         display: flex;
         justify-content: space-between;
-        gap: 12px;
+        gap: 8px;
         align-items: center;
-        padding: 20px 22px 14px;
+        padding: 12px 14px 10px;
+        border-bottom: 1px solid var(--line);
+        background: var(--surface-soft);
       }
       .panel-title {
-        font-family: "Canela", "Iowan Old Style", "Palatino Linotype", serif;
-        font-size: 1.5rem;
-        letter-spacing: -0.03em;
+        font-size: 0.95rem;
+        font-weight: 700;
+        letter-spacing: -0.01em;
       }
       .panel-note {
         color: var(--muted);
-        font-size: 0.92rem;
+        font-size: 0.8rem;
       }
       .table-wrap {
         overflow: auto;
-        padding: 0 10px 10px;
+        max-height: calc(100vh - 230px);
       }
       table {
         width: 100%;
@@ -289,48 +223,49 @@ export class HttpServerService {
       }
       th,
       td {
-        padding: 14px 12px;
+        padding: 10px 12px;
         border-bottom: 1px solid var(--line);
         text-align: left;
         vertical-align: top;
+        white-space: nowrap;
       }
       th {
         color: var(--muted);
-        font-size: 12px;
+        font-size: 11px;
         font-weight: 700;
-        letter-spacing: 0.08em;
+        letter-spacing: 0.04em;
         text-transform: uppercase;
-        background: rgba(255, 255, 255, 0.5);
+        background: var(--surface-soft);
         position: sticky;
         top: 0;
         z-index: 1;
       }
+      tbody tr:nth-child(even) {
+        background: #fbfcfe;
+      }
       tbody tr:hover {
-        background: rgba(255, 255, 255, 0.44);
+        background: #f3f7fd;
       }
       button {
         border: 0;
-        border-radius: 999px;
-        padding: 11px 18px;
+        border-radius: 10px;
+        padding: 9px 14px;
         background: var(--accent);
         color: #fff;
         font: inherit;
         font-weight: 700;
         cursor: pointer;
-        box-shadow: 0 12px 24px rgba(15, 91, 216, 0.22);
-      }
-      button:hover {
-        transform: translateY(-1px);
+        box-shadow: none;
       }
       .pill {
         display: inline-flex;
         align-items: center;
-        gap: 8px;
-        padding: 7px 12px;
+        gap: 6px;
+        padding: 5px 8px;
         border-radius: 999px;
-        font-size: 12px;
+        font-size: 11px;
         font-weight: 700;
-        letter-spacing: 0.04em;
+        letter-spacing: 0.02em;
         text-transform: uppercase;
       }
       .status-ready,
@@ -369,21 +304,22 @@ export class HttpServerService {
       }
       .secondary {
         display: block;
-        margin-top: 4px;
+        margin-top: 2px;
         color: var(--muted);
-        font-size: 0.88rem;
+        font-size: 0.78rem;
       }
       .mono {
         font-family: "SFMono-Regular", "Menlo", monospace;
-        font-size: 0.82rem;
+        font-size: 0.76rem;
       }
       .feedback {
-        min-height: 24px;
+        min-height: 18px;
         color: var(--muted);
-        font-size: 0.95rem;
+        font-size: 0.82rem;
+        text-align: right;
       }
       .empty {
-        padding: 24px 12px;
+        padding: 18px 12px;
         color: var(--muted);
         text-align: center;
       }
@@ -395,24 +331,37 @@ export class HttpServerService {
         padding-right: 10px;
         padding-left: 10px;
       }
+      .table-main td:nth-child(1),
+      .table-main th:nth-child(1),
+      .table-jobs td:nth-child(1),
+      .table-jobs th:nth-child(1),
+      .table-jobs td:nth-child(8),
+      .table-jobs th:nth-child(8) {
+        white-space: normal;
+      }
       @media (max-width: 980px) {
-        .hero-grid,
         .layout {
           grid-template-columns: 1fr;
+        }
+        .cards {
+          grid-template-columns: repeat(2, minmax(0, 1fr));
+        }
+        .table-wrap {
+          max-height: none;
         }
       }
       @media (max-width: 720px) {
         main {
-          padding: 16px 12px 36px;
+          padding: 12px 10px 20px;
         }
-        .hero {
-          padding: 20px;
-          border-radius: 22px;
+        .toolbar {
+          grid-template-columns: 1fr;
         }
-        .toolbar,
-        .card,
-        .panel {
-          border-radius: 18px;
+        .feedback {
+          text-align: left;
+        }
+        .cards {
+          grid-template-columns: 1fr 1fr;
         }
       }
     </style>
@@ -420,27 +369,15 @@ export class HttpServerService {
   <body>
     <main>
       <div class="shell">
-      <section class="hero">
-        <div class="hero-grid">
-          <div class="hero-stack">
-            <span class="hero-kicker">Live Service State</span>
-            <h1 class="hero-title">TensorFlow models, jobs, and runtime state in one place.</h1>
-            <p class="hero-copy muted">
-              Persistent metadata from <span class="mono">/api/state</span>, shaped for a quick operational read:
-              model health, recent training activity, prediction history, and failed jobs.
-            </p>
-          </div>
-          <aside class="hero-meta">
-            <span class="hero-meta-label">Dashboard Feed</span>
-            <div class="hero-meta-value">Auto-refresh every 5 seconds with direct links into the JSON API.</div>
-            <span class="hero-meta-label">Runtime</span>
-            <div class="hero-meta-value">Node transport, Python TensorFlow execution, SQLite metadata, filesystem artifacts.</div>
-          </aside>
-        </div>
-      </section>
       <div class="toolbar">
-        <button id="refresh-button" type="button">Refresh</button>
-        <span id="feedback" class="feedback">Loading state…</span>
+        <div class="toolbar-title">
+          <h1>TensorFlow API dashboard</h1>
+          <div class="toolbar-note">Live state from <span class="mono">/api/state</span>. Auto-refresh every 5 seconds.</div>
+        </div>
+        <div>
+          <span id="feedback" class="feedback">Loading state…</span>
+          <button id="refresh-button" type="button">Refresh</button>
+        </div>
       </div>
       <section id="summary-cards" class="cards"></section>
       <div class="layout">
@@ -452,7 +389,7 @@ export class HttpServerService {
           </div>
         </div>
         <div class="table-wrap">
-        <table>
+        <table class="table-main">
           <thead>
             <tr>
               <th>Model</th>
@@ -476,7 +413,7 @@ export class HttpServerService {
           </div>
         </div>
         <div class="table-wrap">
-        <table class="table-compact">
+        <table class="table-compact table-jobs">
           <thead>
             <tr>
               <th>Job</th>
