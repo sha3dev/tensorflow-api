@@ -8,9 +8,10 @@ import { AppInfoService } from "../src/app-info/index.ts";
 import { DashboardStateService } from "../src/dashboard-state/index.ts";
 import { HttpServerService } from "../src/http/index.ts";
 import { JobService } from "../src/job/index.ts";
+import type { JobRecord } from "../src/job/index.ts";
 import { ModelService } from "../src/model/index.ts";
 import { PythonRuntimeService } from "../src/python-runtime/index.ts";
-import type { PythonJobCommand, PythonJobExecutor } from "../src/python-runtime/index.ts";
+import type { PythonJobCommand, PythonJobExecutor, PythonPredictionCommand, PythonPredictionExecutor } from "../src/python-runtime/index.ts";
 import { StorageService } from "../src/storage/index.ts";
 
 type TestHarness = {
@@ -23,6 +24,18 @@ type TestHarness = {
 
 type FakeExecutorOptions = {
   failingAction?: PythonJobCommand["action"];
+};
+
+type StatePayload = {
+  models: Array<{
+    predictionCount: number;
+    trainingCount: number;
+  }>;
+  summary: {
+    failedJobCount: number;
+    modelCount: number;
+    queuedJobCount: number;
+  };
 };
 
 function createFakeExecutor(options?: FakeExecutorOptions): PythonJobExecutor {
@@ -51,13 +64,58 @@ function createFakeExecutor(options?: FakeExecutorOptions): PythonJobExecutor {
   };
 }
 
+function createFakePredictionExecutor(options?: FakeExecutorOptions): PythonPredictionExecutor {
+  return async (command: PythonPredictionCommand) => {
+    if (options?.failingAction === "predict-model") {
+      return { errorMessage: "simulated predict-model failure", isSuccess: false };
+    }
+
+    return {
+      isSuccess: true,
+      result: {
+        modelId: command.modelId,
+        outputs: command.predictionInput.inputs,
+        status: "predicted",
+      },
+    };
+  };
+}
+
+async function waitForPredictionJob(harness: TestHarness, modelId: string): Promise<JobRecord> {
+  let predictionJob: JobRecord | undefined;
+
+  for (let attemptIndex = 0; attemptIndex < 20; attemptIndex += 1) {
+    const jobsResponse = await fetch(`${harness.baseUrl}/api/jobs?modelId=${encodeURIComponent(modelId)}`);
+    const jobsPayload = (await jobsResponse.json()) as JobRecord[];
+    predictionJob = jobsPayload.find((jobRecord) => {
+      return jobRecord.jobType === "predict_model";
+    });
+
+    if (predictionJob) {
+      break;
+    }
+
+    await new Promise<void>((resolve) => {
+      setTimeout(resolve, 10);
+    });
+  }
+
+  assert.ok(predictionJob);
+  return predictionJob;
+}
+
 async function createHarness(options?: FakeExecutorOptions): Promise<TestHarness> {
   const tempRoot = mkdtempSync(join(tmpdir(), "tensorflow-api-"));
   const storageRoot = join(tempRoot, "storage");
   const sqlitePath = join(tempRoot, "storage", "runtime.sqlite");
   const storageService = new StorageService(sqlitePath, storageRoot);
   const modelService = ModelService.create(storageService);
-  const pythonRuntimeService = new PythonRuntimeService("python3", "python/tensorflow_api_worker.py", createFakeExecutor(options));
+  const pythonRuntimeService = new PythonRuntimeService(
+    "python3",
+    "python/tensorflow_api_worker.py",
+    createFakeExecutor(options),
+    createFakePredictionExecutor(options),
+  );
   const jobService = JobService.create(storageService, modelService, pythonRuntimeService);
   const dashboardStateService = DashboardStateService.create(storageService);
   const appInfoService = AppInfoService.createDefault();
@@ -209,18 +267,16 @@ test("service processes create, train, and prediction jobs and exposes results",
       method: "POST",
     });
     const predictionPayload = await predictionResponse.json();
-    const pendingResultResponse = await fetch(`${harness.baseUrl}/api/jobs/${predictionPayload.jobId}/result`);
-    const pendingResultPayload = await pendingResultResponse.json();
 
     await harness.jobService.processNextQueuedJob();
-    await harness.jobService.processNextQueuedJob();
 
-    const predictionResultResponse = await fetch(`${harness.baseUrl}/api/jobs/${predictionPayload.jobId}/result`);
+    const predictionJob = await waitForPredictionJob(harness, "beta-model");
+    const predictionResultResponse = await fetch(`${harness.baseUrl}/api/jobs/${predictionJob?.jobId}/result`);
     const predictionResultPayload = await predictionResultResponse.json();
     const jobsResponse = await fetch(`${harness.baseUrl}/api/jobs?modelId=beta-model`);
-    const jobsPayload = await jobsResponse.json();
+    const jobsPayload = (await jobsResponse.json()) as JobRecord[];
     const stateResponse = await fetch(`${harness.baseUrl}/api/state`);
-    const statePayload = await stateResponse.json();
+    const statePayload = (await stateResponse.json()) as StatePayload;
     const creationJobResponse = await fetch(`${harness.baseUrl}/api/jobs/${creationJobId}`);
     const creationJobPayload = await creationJobResponse.json();
 
@@ -228,11 +284,11 @@ test("service processes create, train, and prediction jobs and exposes results",
     assert.equal(createdModelPayload.status, "ready");
     assert.equal(trainResponse.status, 202);
     assert.equal(trainPayload.status, "queued");
-    assert.equal(predictionResponse.status, 202);
-    assert.equal(pendingResultResponse.status, 409);
-    assert.deepEqual(pendingResultPayload, {
-      code: "conflict",
-      message: `job '${predictionPayload.jobId}' is not finished yet`,
+    assert.equal(predictionResponse.status, 200);
+    assert.deepEqual(predictionPayload, {
+      modelId: "beta-model",
+      outputs: [[3], [4]],
+      status: "predicted",
     });
     assert.equal(predictionResultResponse.status, 200);
     assert.deepEqual(predictionResultPayload, {
@@ -242,12 +298,14 @@ test("service processes create, train, and prediction jobs and exposes results",
     });
     assert.equal(jobsResponse.status, 200);
     assert.equal(jobsPayload.length, 3);
+    assert.equal(predictionJob?.status, "succeeded");
     assert.equal(creationJobResponse.status, 200);
     assert.equal(creationJobPayload.status, "succeeded");
     assert.equal(statePayload.summary.modelCount, 1);
     assert.equal(statePayload.summary.queuedJobCount, 0);
-    assert.equal(statePayload.models[0].trainingCount, 1);
-    assert.equal(statePayload.models[0].predictionCount, 1);
+    assert.equal(statePayload.models.length, 1);
+    assert.equal(statePayload.models[0]?.trainingCount, 1);
+    assert.equal(statePayload.models[0]?.predictionCount, 1);
   } finally {
     await harness.close();
   }
@@ -306,14 +364,20 @@ test("service marks failed jobs when the Python worker reports an error", async 
       method: "POST",
     });
     const predictionPayload = await predictionResponse.json();
+    const failedPredictionJob = await waitForPredictionJob(harness, "gamma-model");
+    const jobsResponse = await fetch(`${harness.baseUrl}/api/jobs?modelId=gamma-model`);
 
-    await harness.jobService.processNextQueuedJob();
-
-    const failedJobResponse = await fetch(`${harness.baseUrl}/api/jobs/${predictionPayload.jobId}`);
+    const failedJobResponse = await fetch(`${harness.baseUrl}/api/jobs/${failedPredictionJob?.jobId}`);
     const failedJobPayload = await failedJobResponse.json();
     const stateResponse = await fetch(`${harness.baseUrl}/api/state`);
-    const statePayload = await stateResponse.json();
+    const statePayload = (await stateResponse.json()) as StatePayload;
 
+    assert.equal(predictionResponse.status, 500);
+    assert.deepEqual(predictionPayload, {
+      code: "internal_error",
+      message: "simulated predict-model failure",
+    });
+    assert.equal(jobsResponse.status, 200);
     assert.equal(failedJobResponse.status, 200);
     assert.equal(failedJobPayload.status, "failed");
     assert.equal(failedJobPayload.errorCode, "internal_error");

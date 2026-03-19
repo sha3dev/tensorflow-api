@@ -70,6 +70,20 @@ export type JobResultLookup =
       result: JobResultPayload;
     };
 
+export type PredictionExecutionResult =
+  | {
+      kind: "completed";
+      result: JobResultPayload;
+    }
+  | {
+      kind: "conflict" | "not_found";
+      message: string;
+    }
+  | {
+      kind: "failed";
+      message: string;
+    };
+
 export type JobProcessingOutcome =
   | {
       kind: "idle";

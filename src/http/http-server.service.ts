@@ -733,16 +733,20 @@ setInterval(() => {
     const modelId = this.requirePathParam(context, "modelId");
     const payload = await this.readJsonBody(context);
     const createRequest = this.buildPredictionJobRequest(modelId, payload);
-    const createResult = this.jobService.enqueuePredictionJob(modelId, createRequest);
+    const createResult = await this.jobService.executePredictionJob(modelId, createRequest);
     let response: Response;
 
-    if (createResult.kind === "created") {
-      response = this.createJsonResponse(context, createResult.job, 202);
+    if (createResult.kind === "completed") {
+      response = this.createJsonResponse(context, createResult.result, 200);
     } else {
-      if (createResult.kind === "not_found") {
-        response = this.createJsonResponse(context, this.buildJsonError("not_found", createResult.message), 404);
+      if (createResult.kind === "failed") {
+        response = this.createJsonResponse(context, this.buildJsonError("internal_error", createResult.message), 500);
       } else {
-        response = this.createJsonResponse(context, this.buildJsonError("conflict", createResult.message), 409);
+        if (createResult.kind === "not_found") {
+          response = this.createJsonResponse(context, this.buildJsonError("not_found", createResult.message), 404);
+        } else {
+          response = this.createJsonResponse(context, this.buildJsonError("conflict", createResult.message), 409);
+        }
       }
     }
 

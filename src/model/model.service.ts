@@ -122,6 +122,7 @@ export class ModelService {
         modelId: request.modelId,
         requestPath,
         resultPath,
+        startedAt: null,
         status: "queued",
       });
       result = { job: jobRecord, kind: "created", model: modelRecord };

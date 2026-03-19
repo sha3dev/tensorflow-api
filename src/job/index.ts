@@ -10,4 +10,5 @@ export type {
   JobResultPayload,
   JobStatus,
   JobType,
+  PredictionExecutionResult,
 } from "./job.types.ts";

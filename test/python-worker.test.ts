@@ -1,5 +1,5 @@
 import * as assert from "node:assert/strict";
-import { execFile } from "node:child_process";
+import { execFile, spawn } from "node:child_process";
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -7,6 +7,38 @@ import { test } from "node:test";
 import { promisify } from "node:util";
 
 const EXEC_FILE_ASYNC = promisify(execFile);
+
+async function executePredictionOverStdio(tempRoot: string, payload: Record<string, unknown>): Promise<Record<string, unknown>> {
+  const result = await new Promise<Record<string, unknown>>((resolve, reject) => {
+    let standardError = "";
+    let standardOutput = "";
+    const childProcess = spawn("python3", ["python/tensorflow_api_worker.py", "predict-model-stdio"], {
+      cwd: "/Users/jc/Documents/GitHub/tensorflow-api",
+      env: { ...process.env, PYTHONPATH: tempRoot },
+    });
+
+    childProcess.stdout.on("data", (chunk: Buffer) => {
+      standardOutput += String(chunk);
+    });
+    childProcess.stderr.on("data", (chunk: Buffer) => {
+      standardError += String(chunk);
+    });
+    childProcess.on("close", (exitCode: number | null) => {
+      if (exitCode !== 0) {
+        reject(new Error(standardError.trim() || "python worker execution failed"));
+      } else {
+        resolve(JSON.parse(standardOutput) as Record<string, unknown>);
+      }
+    });
+    childProcess.on("error", (error: Error) => {
+      reject(error);
+    });
+    childProcess.stdin.write(JSON.stringify(payload));
+    childProcess.stdin.end();
+  });
+
+  return result;
+}
 
 function createFakeTensorflowModule(moduleRootPath: string): void {
   const moduleSource = `import json
@@ -142,7 +174,41 @@ test("python worker normalizes fit config keys and converts training arrays", as
   }
 });
 
-test("python worker converts prediction arrays before calling predict", async () => {
+test("python worker converts prediction arrays before calling predict over stdio", async () => {
+  const tempRoot = mkdtempSync(join(tmpdir(), "tensorflow-worker-test-"));
+  const artifactPath = join(tempRoot, "artifact.keras");
+
+  try {
+    createFakeTensorflowModule(tempRoot);
+    writeFileSync(artifactPath, JSON.stringify({ compile_config: {}, config: { layers: [] }, model_kind: "sequential" }), "utf8");
+    const resultPayload = (await executePredictionOverStdio(tempRoot, {
+      artifactPath,
+      modelId: "worker-model",
+      predictionInput: {
+        inputs: [
+          [5, 6],
+          [7, 8],
+        ],
+      },
+    })) as {
+      outputs: unknown[];
+      status: string;
+    };
+
+    assert.equal(resultPayload.status, "predicted");
+    assert.deepEqual(resultPayload.outputs, [
+      true,
+      [
+        [5, 6],
+        [7, 8],
+      ],
+    ]);
+  } finally {
+    rmSync(tempRoot, { force: true, recursive: true });
+  }
+});
+
+test("python worker keeps file-based prediction mode for queued jobs", async () => {
   const tempRoot = mkdtempSync(join(tmpdir(), "tensorflow-worker-test-"));
   const requestPath = join(tempRoot, "predict-request.json");
   const resultPath = join(tempRoot, "predict-result.json");

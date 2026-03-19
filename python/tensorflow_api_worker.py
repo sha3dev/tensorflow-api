@@ -17,9 +17,21 @@ def write_result(result_path: str, payload: dict) -> None:
     target_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
 
 
+def write_stdout(payload: dict) -> None:
+    sys.stdout.write(json.dumps(payload))
+    sys.stdout.flush()
+
+
 def load_request(request_path: str) -> dict:
     content = Path(request_path).read_text(encoding="utf-8")
     payload = json.loads(content)
+    if not isinstance(payload, dict):
+        raise ValueError("request payload must be a JSON object")
+    return payload
+
+
+def load_stdin_request() -> dict:
+    payload = json.loads(sys.stdin.read())
     if not isinstance(payload, dict):
         raise ValueError("request payload must be a JSON object")
     return payload
@@ -137,7 +149,35 @@ def predict_model(payload: dict, result_path: str) -> None:
     )
 
 
+def predict_model_to_stdout(payload: dict) -> None:
+    tf = require_tensorflow()
+    artifact_path = payload["artifactPath"]
+    prediction_input = payload["predictionInput"]
+    model = tf.keras.models.load_model(artifact_path)
+    prediction_output = model.predict(to_tensor(tf, prediction_input["inputs"]))
+    if hasattr(prediction_output, "tolist"):
+        serializable_output = prediction_output.tolist()
+    else:
+        serializable_output = prediction_output
+    write_stdout(
+        {
+            "modelId": payload["modelId"],
+            "outputs": serializable_output,
+            "status": "predicted",
+        }
+    )
+
+
 def main() -> int:
+    if len(sys.argv) == 2 and sys.argv[1] == "predict-model-stdio":
+        try:
+            payload = load_stdin_request()
+            predict_model_to_stdout(payload)
+        except Exception as runtime_error:  # noqa: BLE001
+            print(str(runtime_error), file=sys.stderr)
+            return 1
+        return 0
+
     if len(sys.argv) != 4:
         print(
             "usage: tensorflow_api_worker.py <create-model|train-model|predict-model> <request-path> <result-path>",

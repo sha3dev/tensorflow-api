@@ -29,7 +29,7 @@ The runtime keeps:
 ## Main Capabilities
 
 - create declarative Keras models from JSON
-- queue training and prediction as persisted jobs
+- queue training jobs and run prediction on the fast path without file-based job orchestration
 - expose model and job metadata through JSON endpoints
 - serve a tiny SPA dashboard backed by `/api/state`
 - recover interrupted running jobs as failed after restart
@@ -203,7 +203,7 @@ curl -X POST http://localhost:3000/api/models/demo-model/training-jobs \
   }'
 ```
 
-Queue prediction:
+Run prediction synchronously on the request fast path:
 
 ```bash
 curl -X POST http://localhost:3000/api/models/demo-model/prediction-jobs \
@@ -461,14 +461,15 @@ Status:
 
 ### `POST /api/models/:modelId/prediction-jobs`
 
-Queues model prediction.
+Runs model prediction synchronously and returns the prediction payload in the same response. Prediction does not go through the queued-job pipeline. The service records prediction history after the response so the HTTP critical path stays as short as possible.
 
 Status:
 
-- `202`
+- `200`
 - `400` for invalid payloads
 - `404` when the model does not exist
 - `409` when the model is not ready
+- `500` when the Python worker fails during prediction
 
 ### `GET /api/jobs`
 
@@ -644,7 +645,7 @@ type CreateTrainingJobRequest = {
 
 ### `CreatePredictionJobRequest`
 
-Request type for queuing prediction.
+Request type for synchronous prediction.
 
 ```ts
 type CreatePredictionJobRequest = {
@@ -754,7 +755,7 @@ Configuration lives in [`src/config.ts`](/Users/jc/Documents/GitHub/tensorflow-a
 - `src/app/service-runtime.service.ts`: runtime composition and polling lifecycle
 - `src/http/http-server.service.ts`: HTTP transport and dashboard asset serving
 - `src/model/model.service.ts`: model creation and lookup
-- `src/job/job.service.ts`: queued training and prediction jobs
+- `src/job/job.service.ts`: queued training jobs and fast-path prediction execution
 - `src/storage/storage.service.ts`: SQLite and filesystem persistence
 - `src/python-runtime/python-runtime.service.ts`: Python process execution
 - `python/tensorflow_api_worker.py`: TensorFlow worker script

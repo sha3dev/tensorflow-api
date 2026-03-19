@@ -35,6 +35,7 @@ type InsertJobRecordCommand = {
   modelId: string;
   requestPath: string;
   resultPath: string;
+  startedAt: string | null;
   status: JobStatus;
 };
 
@@ -273,6 +274,10 @@ export class StorageService {
     this.database.prepare("UPDATE model_record SET last_prediction_job_id = ?, updated_at = ? WHERE model_id = ?").run(jobId, updatedAt, modelId);
   }
 
+  public markModelPredictionStarted(modelId: string, jobId: string, updatedAt: string): void {
+    this.database.prepare("UPDATE model_record SET last_prediction_job_id = ?, updated_at = ? WHERE model_id = ?").run(jobId, updatedAt, modelId);
+  }
+
   public markModelTrainingSucceeded(modelId: string, jobId: string, updatedAt: string): void {
     this.database
       .prepare(`
@@ -314,9 +319,9 @@ export class StorageService {
           error_message,
           request_path,
           result_path
-        ) VALUES (?, ?, ?, ?, ?, NULL, NULL, NULL, NULL, ?, ?)
+        ) VALUES (?, ?, ?, ?, ?, ?, NULL, NULL, NULL, ?, ?)
       `)
-      .run(command.jobId, command.modelId, command.jobType, command.status, command.createdAt, command.requestPath, command.resultPath);
+      .run(command.jobId, command.modelId, command.jobType, command.status, command.createdAt, command.startedAt, command.requestPath, command.resultPath);
   }
 
   public getJobRecord(jobId: string): JobRecord | null {

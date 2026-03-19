@@ -9,7 +9,15 @@ import { spawn } from "node:child_process";
  */
 
 import config from "../config.ts";
-import type { PythonExecutionResult, PythonJobCommand, PythonJobExecutor } from "./index.ts";
+import logger from "../logger.ts";
+import type {
+  PythonExecutionResult,
+  PythonJobCommand,
+  PythonJobExecutor,
+  PythonPredictionCommand,
+  PythonPredictionExecutor,
+  PythonPredictionResult,
+} from "./index.ts";
 
 /**
  * @section class
@@ -22,6 +30,8 @@ export class PythonRuntimeService {
 
   private readonly executor: PythonJobExecutor;
 
+  private readonly predictionExecutor: PythonPredictionExecutor;
+
   private readonly pythonBin: string;
 
   private readonly workerScriptPath: string;
@@ -30,10 +40,11 @@ export class PythonRuntimeService {
    * @section constructor
    */
 
-  public constructor(pythonBin: string, workerScriptPath: string, executor?: PythonJobExecutor) {
+  public constructor(pythonBin: string, workerScriptPath: string, executor?: PythonJobExecutor, predictionExecutor?: PythonPredictionExecutor) {
     this.pythonBin = pythonBin;
     this.workerScriptPath = workerScriptPath;
     this.executor = executor || this.executeThroughPython.bind(this);
+    this.predictionExecutor = predictionExecutor || this.executePredictionThroughPython.bind(this);
   }
 
   /**
@@ -74,12 +85,65 @@ export class PythonRuntimeService {
     return result;
   }
 
+  private async executePredictionThroughPython(command: PythonPredictionCommand): Promise<PythonPredictionResult> {
+    const result = await new Promise<PythonPredictionResult>((resolve) => {
+      let errorOutput = "";
+      let standardOutput = "";
+      const process = spawn(this.pythonBin, [this.workerScriptPath, "predict-model-stdio"]);
+      process.stdout.on("data", (chunk) => {
+        standardOutput += String(chunk);
+      });
+      process.stderr.on("data", (chunk) => {
+        errorOutput += String(chunk);
+      });
+      process.on("close", (exitCode) => {
+        const normalizedErrorOutput = errorOutput.trim();
+        const normalizedStandardOutput = standardOutput.trim();
+        let executionResult: PythonPredictionResult;
+
+        if (exitCode !== 0) {
+          executionResult = {
+            errorMessage: normalizedErrorOutput || "python worker execution failed",
+            isSuccess: false,
+          };
+        } else {
+          try {
+            executionResult = {
+              isSuccess: true,
+              result: JSON.parse(normalizedStandardOutput) as Record<string, unknown>,
+            };
+          } catch (error) {
+            const normalizedError = error instanceof Error ? error.message : "python worker returned an invalid prediction payload";
+            logger.error(`python worker returned an invalid prediction payload: ${normalizedError}`);
+            executionResult = {
+              errorMessage: normalizedError,
+              isSuccess: false,
+            };
+          }
+        }
+
+        resolve(executionResult);
+      });
+      process.on("error", (error) => {
+        resolve({ errorMessage: error.message, isSuccess: false });
+      });
+      process.stdin.write(JSON.stringify(command));
+      process.stdin.end();
+    });
+    return result;
+  }
+
   /**
    * @section public:methods
    */
 
   public async execute(command: PythonJobCommand): Promise<PythonExecutionResult> {
     const result = await this.executor(command);
+    return result;
+  }
+
+  public async executePrediction(command: PythonPredictionCommand): Promise<PythonPredictionResult> {
+    const result = await this.predictionExecutor(command);
     return result;
   }
 }
