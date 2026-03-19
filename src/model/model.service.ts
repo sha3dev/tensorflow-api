@@ -11,7 +11,7 @@ import { join } from "node:path";
 
 import type { JobRecord } from "../job/index.ts";
 import type { StorageService } from "../storage/index.ts";
-import type { CreateModelRequest, CreateModelResult, ModelRecord } from "./index.ts";
+import type { CreateModelRequest, CreateModelResult, DeleteModelResult, ModelRecord } from "./index.ts";
 
 /**
  * @section class
@@ -90,12 +90,10 @@ export class ModelService {
         artifactPath,
         createdAt,
         definitionPath,
-        lastPredictionAt: null,
-        lastPredictionJobId: null,
         lastTrainingAt: null,
         lastTrainingJobId: null,
+        metadata: request.metadata || null,
         modelId: request.modelId,
-        predictionCount: 0,
         status: "pending",
         trainingCount: 0,
         updatedAt: createdAt,
@@ -105,12 +103,14 @@ export class ModelService {
       this.storageService.writeJsonFile(requestPath, {
         artifactPath,
         definition: request.definition,
+        metadata: request.metadata || null,
         modelId: request.modelId,
       });
       this.storageService.insertModelRecord({
         artifactPath,
         createdAt,
         definitionPath,
+        metadata: request.metadata || null,
         modelId: request.modelId,
         status: "pending",
         updatedAt: createdAt,
@@ -139,5 +139,23 @@ export class ModelService {
   public getModel(modelId: string): ModelRecord | null {
     const modelRecord = this.storageService.getModelRecord(modelId);
     return modelRecord;
+  }
+
+  public deleteModel(modelId: string): DeleteModelResult {
+    const existingModel = this.storageService.getModelRecord(modelId);
+    let result: DeleteModelResult;
+
+    if (!existingModel) {
+      result = { kind: "not_found", message: `model '${modelId}' was not found` };
+    } else {
+      if (this.storageService.hasActiveJobsForModel(modelId)) {
+        result = { kind: "conflict", message: `model '${modelId}' has active jobs and cannot be deleted` };
+      } else {
+        this.storageService.deleteModel(modelId);
+        result = { kind: "deleted" };
+      }
+    }
+
+    return result;
   }
 }

@@ -1,6 +1,8 @@
 export type JobStatus = "failed" | "queued" | "running" | "succeeded";
 
-export type JobType = "create_model" | "predict_model" | "train_model";
+export type JobType = "create_model" | "train_model";
+
+export type TrainingSampleWeight = number[] | Record<string, number[]>;
 
 export type CreateTrainingJobRequest = {
   fitConfig?: {
@@ -9,10 +11,13 @@ export type CreateTrainingJobRequest = {
     shuffle?: boolean;
     validationSplit?: number;
   };
+  modelMetadata?: Record<string, unknown>;
   trainingInput: {
     inputs: unknown;
+    sampleWeights?: TrainingSampleWeight;
     targets: unknown;
     validationInputs?: unknown;
+    validationSampleWeights?: TrainingSampleWeight;
     validationTargets?: unknown;
   };
 };
@@ -73,16 +78,25 @@ export type JobResultLookup =
 export type PredictionExecutionResult =
   | {
       kind: "completed";
-      result: JobResultPayload;
+      result: PredictionResultPayload;
     }
   | {
-      kind: "conflict" | "not_found";
-      message: string;
-    }
-  | {
-      kind: "failed";
+      kind: "conflict" | "failed" | "not_found";
       message: string;
     };
+
+export type PredictionResultPayload = {
+  modelId: string;
+  outputs: Record<string, unknown> | unknown;
+  status: "predicted";
+};
+
+export type TrainingJobResultPayload = {
+  history?: Record<string, unknown>;
+  modelId: string;
+  status: "succeeded";
+  trainedAt: string;
+};
 
 export type JobProcessingOutcome =
   | {

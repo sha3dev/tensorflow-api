@@ -13,6 +13,7 @@ export type KerasModelDefinition = {
 
 export type CreateModelRequest = {
   definition: KerasModelDefinition;
+  metadata?: Record<string, unknown>;
   modelId: string;
 };
 
@@ -20,12 +21,10 @@ export type ModelRecord = {
   artifactPath: string;
   createdAt: string;
   definitionPath: string;
-  lastPredictionAt: string | null;
-  lastPredictionJobId: string | null;
   lastTrainingAt: string | null;
   lastTrainingJobId: string | null;
+  metadata: Record<string, unknown> | null;
   modelId: string;
-  predictionCount: number;
   status: ModelStatus;
   trainingCount: number;
   updatedAt: string;
@@ -39,5 +38,14 @@ export type CreateModelResult =
     }
   | {
       kind: "conflict";
+      message: string;
+    };
+
+export type DeleteModelResult =
+  | {
+      kind: "deleted";
+    }
+  | {
+      kind: "conflict" | "not_found";
       message: string;
     };

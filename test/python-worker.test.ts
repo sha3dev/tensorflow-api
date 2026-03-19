@@ -66,6 +66,7 @@ class FakeModel:
         self.model_kind = model_kind
         self.config = config
         self.compile_config = {}
+        self.output_names = config.get("output_names", ["output"])
 
     def compile(self, **kwargs):
         self.compile_config = kwargs
@@ -77,22 +78,33 @@ class FakeModel:
                     "compile_config": self.compile_config,
                     "config": self.config,
                     "model_kind": self.model_kind,
+                    "output_names": self.output_names,
                 }
             ),
             encoding="utf-8",
         )
 
-    def fit(self, inputs, targets, validation_data=None, **kwargs):
+    def fit(self, inputs, targets, validation_data=None, sample_weight=None, **kwargs):
+        validation_sample_weight = (
+            validation_data[2] if validation_data is not None and len(validation_data) == 3 else None
+        )
         return FakeHistory(
             {
                 "batch_size": [kwargs.get("batch_size")],
                 "input_is_converted": [inputs.get("converted")],
+                "sample_weight": [sample_weight],
                 "target_is_converted": [targets.get("converted")],
+                "validation_sample_weight": [validation_sample_weight],
                 "validation_split": [kwargs.get("validation_split")],
             }
         )
 
     def predict(self, inputs):
+        if len(self.output_names) > 1:
+            return [
+                FakeArray([output_name, inputs.get("value")])
+                for output_name in self.output_names
+            ]
         return FakeArray([inputs.get("converted"), inputs.get("value")])
 
 
@@ -114,6 +126,7 @@ class ModelsApi:
         saved_model = json.loads(Path(artifact_path).read_text(encoding="utf-8"))
         model = FakeModel(saved_model["model_kind"], saved_model["config"])
         model.compile_config = saved_model.get("compile_config", {})
+        model.output_names = saved_model.get("output_names", ["output"])
         return model
 
 
@@ -168,7 +181,121 @@ test("python worker normalizes fit config keys and converts training arrays", as
     assert.deepEqual(resultPayload.history.batch_size, [4]);
     assert.deepEqual(resultPayload.history.validation_split, [0.5]);
     assert.deepEqual(resultPayload.history.input_is_converted, [true]);
+    assert.deepEqual(resultPayload.history.sample_weight, [null]);
     assert.deepEqual(resultPayload.history.target_is_converted, [true]);
+  } finally {
+    rmSync(tempRoot, { force: true, recursive: true });
+  }
+});
+
+test("python worker passes single-output sample weights into fit", async () => {
+  const tempRoot = mkdtempSync(join(tmpdir(), "tensorflow-worker-test-"));
+  const requestPath = join(tempRoot, "train-request.json");
+  const resultPath = join(tempRoot, "train-result.json");
+  const artifactPath = join(tempRoot, "artifact.keras");
+
+  try {
+    createFakeTensorflowModule(tempRoot);
+    writeFileSync(artifactPath, JSON.stringify({ compile_config: {}, config: { layers: [] }, model_kind: "sequential" }), "utf8");
+    writeFileSync(
+      requestPath,
+      JSON.stringify({
+        artifactPath,
+        modelId: "worker-model",
+        trainingInput: {
+          inputs: [[1], [2]],
+          sampleWeights: [1, 0.5],
+          targets: [[0], [1]],
+          validationInputs: [[3]],
+          validationSampleWeights: [0.25],
+          validationTargets: [[1]],
+        },
+      }),
+      "utf8",
+    );
+
+    await EXEC_FILE_ASYNC("python3", ["python/tensorflow_api_worker.py", "train-model", requestPath, resultPath], {
+      cwd: "/Users/jc/Documents/GitHub/tensorflow-api",
+      env: { ...process.env, PYTHONPATH: tempRoot },
+    });
+
+    const resultPayload = JSON.parse(readFileSync(resultPath, "utf8")) as {
+      history: Record<string, unknown[]>;
+    };
+
+    assert.deepEqual(resultPayload.history.sample_weight, [{ converted: true, value: [1, 0.5] }]);
+    assert.deepEqual(resultPayload.history.validation_sample_weight, [{ converted: true, value: [0.25] }]);
+  } finally {
+    rmSync(tempRoot, { force: true, recursive: true });
+  }
+});
+
+test("python worker passes multi-output sample weights into fit", async () => {
+  const tempRoot = mkdtempSync(join(tmpdir(), "tensorflow-worker-test-"));
+  const requestPath = join(tempRoot, "train-request.json");
+  const resultPath = join(tempRoot, "train-result.json");
+  const artifactPath = join(tempRoot, "artifact.keras");
+
+  try {
+    createFakeTensorflowModule(tempRoot);
+    writeFileSync(
+      artifactPath,
+      JSON.stringify({ compile_config: {}, config: { layers: [] }, model_kind: "functional", output_names: ["regression", "classification"] }),
+      "utf8",
+    );
+    writeFileSync(
+      requestPath,
+      JSON.stringify({
+        artifactPath,
+        modelId: "worker-model",
+        trainingInput: {
+          inputs: [[1], [2]],
+          sampleWeights: {
+            classification: [2, 0.5],
+            regression: [1, 1],
+          },
+          targets: {
+            classification: [
+              [1, 0],
+              [0, 1],
+            ],
+            regression: [[0.1], [0.2]],
+          },
+          validationInputs: [[3]],
+          validationSampleWeights: {
+            classification: [0.75],
+            regression: [0.25],
+          },
+          validationTargets: {
+            classification: [[1, 0]],
+            regression: [[0.3]],
+          },
+        },
+      }),
+      "utf8",
+    );
+
+    await EXEC_FILE_ASYNC("python3", ["python/tensorflow_api_worker.py", "train-model", requestPath, resultPath], {
+      cwd: "/Users/jc/Documents/GitHub/tensorflow-api",
+      env: { ...process.env, PYTHONPATH: tempRoot },
+    });
+
+    const resultPayload = JSON.parse(readFileSync(resultPath, "utf8")) as {
+      history: Record<string, unknown[]>;
+    };
+
+    assert.deepEqual(resultPayload.history.sample_weight, [
+      {
+        classification: { converted: true, value: [2, 0.5] },
+        regression: { converted: true, value: [1, 1] },
+      },
+    ]);
+    assert.deepEqual(resultPayload.history.validation_sample_weight, [
+      {
+        classification: { converted: true, value: [0.75] },
+        regression: { converted: true, value: [0.25] },
+      },
+    ]);
   } finally {
     rmSync(tempRoot, { force: true, recursive: true });
   }
@@ -208,48 +335,33 @@ test("python worker converts prediction arrays before calling predict over stdio
   }
 });
 
-test("python worker keeps file-based prediction mode for queued jobs", async () => {
+test("python worker maps multi-output predictions by output name", async () => {
   const tempRoot = mkdtempSync(join(tmpdir(), "tensorflow-worker-test-"));
-  const requestPath = join(tempRoot, "predict-request.json");
-  const resultPath = join(tempRoot, "predict-result.json");
   const artifactPath = join(tempRoot, "artifact.keras");
 
   try {
     createFakeTensorflowModule(tempRoot);
-    writeFileSync(artifactPath, JSON.stringify({ compile_config: {}, config: { layers: [] }, model_kind: "sequential" }), "utf8");
     writeFileSync(
-      requestPath,
-      JSON.stringify({
-        artifactPath,
-        modelId: "worker-model",
-        predictionInput: {
-          inputs: [
-            [5, 6],
-            [7, 8],
-          ],
-        },
-      }),
+      artifactPath,
+      JSON.stringify({ compile_config: {}, config: { layers: [] }, model_kind: "functional", output_names: ["regression", "classification"] }),
       "utf8",
     );
-
-    await EXEC_FILE_ASYNC("python3", ["python/tensorflow_api_worker.py", "predict-model", requestPath, resultPath], {
-      cwd: "/Users/jc/Documents/GitHub/tensorflow-api",
-      env: { ...process.env, PYTHONPATH: tempRoot },
-    });
-
-    const resultPayload = JSON.parse(readFileSync(resultPath, "utf8")) as {
-      outputs: unknown[];
+    const resultPayload = (await executePredictionOverStdio(tempRoot, {
+      artifactPath,
+      modelId: "worker-model",
+      predictionInput: {
+        inputs: [[5, 6]],
+      },
+    })) as {
+      outputs: Record<string, unknown>;
       status: string;
     };
 
     assert.equal(resultPayload.status, "predicted");
-    assert.deepEqual(resultPayload.outputs, [
-      true,
-      [
-        [5, 6],
-        [7, 8],
-      ],
-    ]);
+    assert.deepEqual(resultPayload.outputs, {
+      classification: ["classification", [[5, 6]]],
+      regression: ["regression", [[5, 6]]],
+    });
   } finally {
     rmSync(tempRoot, { force: true, recursive: true });
   }

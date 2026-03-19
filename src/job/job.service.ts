@@ -9,7 +9,6 @@ import { join } from "node:path";
  * @section imports:internals
  */
 
-import logger from "../logger.ts";
 import type { ModelService } from "../model/index.ts";
 import type { PythonRuntimeService } from "../python-runtime/index.ts";
 import type { StorageService } from "../storage/index.ts";
@@ -23,6 +22,8 @@ import type {
   JobResultLookup,
   JobResultPayload,
   PredictionExecutionResult,
+  PredictionResultPayload,
+  TrainingJobResultPayload,
 } from "./index.ts";
 
 /**
@@ -98,17 +99,13 @@ export class JobService {
     return jobRecord;
   }
 
-  private mapJobTypeToAction(jobType: JobRecord["jobType"]): "create-model" | "predict-model" | "train-model" {
-    let action: "create-model" | "predict-model" | "train-model";
+  private mapJobTypeToAction(jobType: JobRecord["jobType"]): "create-model" | "train-model" {
+    let action: "create-model" | "train-model";
 
     if (jobType === "create_model") {
       action = "create-model";
     } else {
-      if (jobType === "train_model") {
-        action = "train-model";
-      } else {
-        action = "predict-model";
-      }
+      action = "train-model";
     }
 
     return action;
@@ -122,10 +119,6 @@ export class JobService {
     if (jobRecord.jobType === "train_model") {
       this.storageService.markModelTrainingSucceeded(jobRecord.modelId, jobRecord.jobId, finishedAt);
     }
-
-    if (jobRecord.jobType === "predict_model") {
-      this.storageService.markModelPredictionSucceeded(jobRecord.modelId, jobRecord.jobId, finishedAt);
-    }
   }
 
   private readPersistedJobResult(jobRecord: JobRecord): JobResultPayload {
@@ -133,50 +126,36 @@ export class JobService {
     return jobResult;
   }
 
-  private persistPredictionJob(modelId: string, request: CreatePredictionJobRequest, result: JobResultPayload, errorMessage: string | null): void {
-    const createdAt = this.now();
-    const jobRecord = this.createJobRecord("predict_model", modelId, "", "", createdAt, errorMessage ? "failed" : "succeeded", createdAt);
-    const jobDirectory = this.storageService.ensureJobDirectory(jobRecord.jobId);
-    const requestPath = join(jobDirectory, "request.json");
-    const resultPath = join(jobDirectory, "result.json");
-    const finishedAt = this.now();
-    this.storageService.writeJsonFile(requestPath, {
-      modelId,
-      predictionInput: request.predictionInput,
-    });
-
-    if (!errorMessage) {
-      this.storageService.writeJsonFile(resultPath, result);
-    }
-
-    this.storageService.insertJobRecord({
-      createdAt,
-      jobId: jobRecord.jobId,
-      jobType: jobRecord.jobType,
-      modelId,
-      requestPath,
-      resultPath,
-      startedAt: createdAt,
-      status: jobRecord.status,
-    });
-
-    if (errorMessage) {
-      this.storageService.markJobFailed(jobRecord.jobId, finishedAt, "internal_error", errorMessage);
-    } else {
-      this.storageService.markJobSucceeded(jobRecord.jobId, finishedAt);
-      this.storageService.markModelPredictionSucceeded(modelId, jobRecord.jobId, finishedAt);
-    }
+  private readTrainingMetadata(jobRecord: JobRecord): Record<string, unknown> | undefined {
+    const requestPayload = this.storageService.readJsonFile(jobRecord.requestPath) as Record<string, unknown>;
+    const modelMetadata = requestPayload.modelMetadata as Record<string, unknown> | undefined;
+    return modelMetadata;
   }
 
-  private schedulePredictionPersistence(modelId: string, request: CreatePredictionJobRequest, result: JobResultPayload, errorMessage: string | null): void {
-    setImmediate(() => {
-      try {
-        this.persistPredictionJob(modelId, request, result, errorMessage);
-      } catch (error) {
-        const normalizedError = error instanceof Error ? error.message : "prediction persistence failed";
-        logger.error(`prediction persistence failed for model '${modelId}': ${normalizedError}`);
-      }
-    });
+  private buildPredictionResultPayload(result: PredictionResultPayload): PredictionResultPayload {
+    const payload: PredictionResultPayload = {
+      modelId: result.modelId,
+      outputs: result.outputs,
+      status: result.status,
+    };
+    return payload;
+  }
+
+  private buildTrainingJobResultPayload(jobRecord: JobRecord, persistedResult: JobResultPayload): TrainingJobResultPayload {
+    const history = persistedResult.history as Record<string, unknown> | undefined;
+    const resultPayload: TrainingJobResultPayload = history
+      ? {
+          history,
+          modelId: jobRecord.modelId,
+          status: "succeeded",
+          trainedAt: jobRecord.finishedAt || jobRecord.createdAt,
+        }
+      : {
+          modelId: jobRecord.modelId,
+          status: "succeeded",
+          trainedAt: jobRecord.finishedAt || jobRecord.createdAt,
+        };
+    return resultPayload;
   }
 
   /**
@@ -207,6 +186,7 @@ export class JobService {
           artifactPath: modelRecord.artifactPath,
           fitConfig: request.fitConfig || {},
           modelId,
+          modelMetadata: request.modelMetadata,
           trainingInput: request.trainingInput,
         });
         this.storageService.insertJobRecord({
@@ -244,13 +224,11 @@ export class JobService {
         });
 
         if (executionResult.isSuccess) {
-          this.schedulePredictionPersistence(modelId, request, executionResult.result, null);
           result = {
             kind: "completed",
-            result: executionResult.result,
+            result: this.buildPredictionResultPayload(executionResult.result as PredictionResultPayload),
           };
         } else {
-          this.schedulePredictionPersistence(modelId, request, {}, executionResult.errorMessage);
           result = {
             kind: "failed",
             message: executionResult.errorMessage,
@@ -282,7 +260,8 @@ export class JobService {
       if (jobRecord.status !== "succeeded") {
         result = { job: jobRecord, kind: "not_ready" };
       } else {
-        const jobResult = this.readPersistedJobResult(jobRecord);
+        const persistedResult = this.readPersistedJobResult(jobRecord);
+        const jobResult = jobRecord.jobType === "train_model" ? this.buildTrainingJobResultPayload(jobRecord, persistedResult) : persistedResult;
         result = { job: jobRecord, kind: "ready", result: jobResult };
       }
     }
@@ -305,8 +284,12 @@ export class JobService {
       const finishedAt = this.now();
 
       if (executionResult.isSuccess) {
-        this.storageService.markJobSucceeded(claimedJob.jobId, finishedAt);
-        this.updateModelAfterSuccess(claimedJob, finishedAt);
+        if (claimedJob.jobType === "train_model") {
+          this.storageService.completeTrainingJob(claimedJob.jobId, claimedJob.modelId, finishedAt, this.readTrainingMetadata(claimedJob));
+        } else {
+          this.storageService.markJobSucceeded(claimedJob.jobId, finishedAt);
+          this.updateModelAfterSuccess(claimedJob, finishedAt);
+        }
       } else {
         this.storageService.markJobFailed(claimedJob.jobId, finishedAt, "internal_error", executionResult.errorMessage || "python worker execution failed");
 

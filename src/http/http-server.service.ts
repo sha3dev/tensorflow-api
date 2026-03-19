@@ -15,7 +15,7 @@ import type { ContentfulStatusCode } from "hono/utils/http-status";
 import type { AppInfoService } from "../app-info/index.ts";
 import config from "../config.ts";
 import type { DashboardStateService } from "../dashboard-state/index.ts";
-import type { CreatePredictionJobRequest, CreateTrainingJobRequest, JobListFilter, JobStatus } from "../job/index.ts";
+import type { CreatePredictionJobRequest, CreateTrainingJobRequest, JobListFilter, JobStatus, TrainingSampleWeight } from "../job/index.ts";
 import type { JobService } from "../job/index.ts";
 import type { CreateModelRequest, KerasModelDefinition } from "../model/index.ts";
 import type { ModelService } from "../model/index.ts";
@@ -69,6 +69,95 @@ export class HttpServerService {
   private isRecord(payload: unknown): payload is Record<string, unknown> {
     const isPayloadRecord = Boolean(payload) && typeof payload === "object" && !Array.isArray(payload);
     return isPayloadRecord;
+  }
+
+  private isNumberArray(payload: unknown): payload is number[] {
+    const isValidNumberArray =
+      Array.isArray(payload) &&
+      payload.every((entry) => {
+        return typeof entry === "number" && Number.isFinite(entry);
+      });
+    return isValidNumberArray;
+  }
+
+  private getLeadingArrayLength(payload: unknown): number | null {
+    const leadingArrayLength = Array.isArray(payload) ? payload.length : null;
+    return leadingArrayLength;
+  }
+
+  private validateTrainingMetadata(payload: unknown, fieldName: string): Record<string, unknown> | undefined {
+    let metadata: Record<string, unknown> | undefined;
+
+    if (payload !== undefined) {
+      if (!this.isRecord(payload)) {
+        throw new Error(`invalid_request: ${fieldName} must be an object`);
+      }
+
+      metadata = payload;
+    }
+
+    return metadata;
+  }
+
+  private validateSampleWeightRecord(sampleWeights: Record<string, unknown>, targets: Record<string, unknown>, fieldName: string): Record<string, number[]> {
+    const sampleWeightKeys = Object.keys(sampleWeights).sort();
+    const targetKeys = Object.keys(targets).sort();
+    let validatedSampleWeights: Record<string, number[]> = {};
+
+    if (
+      sampleWeightKeys.length !== targetKeys.length ||
+      sampleWeightKeys.some((sampleWeightKey, index) => {
+        return sampleWeightKey !== targetKeys[index];
+      })
+    ) {
+      throw new Error(`invalid_request: ${fieldName} keys must match target output names`);
+    }
+
+    for (const targetKey of targetKeys) {
+      const rawSampleWeight = sampleWeights[targetKey];
+
+      if (!this.isNumberArray(rawSampleWeight)) {
+        throw new Error(`invalid_request: ${fieldName}.${targetKey} must be an array of numbers`);
+      }
+
+      const targetLength = this.getLeadingArrayLength(targets[targetKey]);
+
+      if (targetLength === null || targetLength !== rawSampleWeight.length) {
+        throw new Error(`invalid_request: ${fieldName}.${targetKey} length must match target batch size`);
+      }
+
+      validatedSampleWeights = { ...validatedSampleWeights, [targetKey]: rawSampleWeight };
+    }
+
+    return validatedSampleWeights;
+  }
+
+  private validateSampleWeights(payload: unknown, targets: unknown, fieldName: string): TrainingSampleWeight | undefined {
+    let sampleWeights: TrainingSampleWeight | undefined;
+
+    if (payload !== undefined) {
+      if (this.isNumberArray(payload)) {
+        if (this.isRecord(targets)) {
+          throw new Error(`invalid_request: ${fieldName} must match the target shape`);
+        }
+
+        const targetLength = this.getLeadingArrayLength(targets);
+
+        if (targetLength === null || targetLength !== payload.length) {
+          throw new Error(`invalid_request: ${fieldName} length must match target batch size`);
+        }
+
+        sampleWeights = payload;
+      } else {
+        if (!this.isRecord(payload) || !this.isRecord(targets)) {
+          throw new Error(`invalid_request: ${fieldName} must match the target shape`);
+        }
+
+        sampleWeights = this.validateSampleWeightRecord(payload, targets, fieldName);
+      }
+    }
+
+    return sampleWeights;
   }
 
   private buildJsonError(code: string, message: string): { code: string; message: string } {
@@ -257,6 +346,13 @@ export class HttpServerService {
         cursor: pointer;
         box-shadow: none;
       }
+      button:disabled {
+        cursor: wait;
+        opacity: 0.65;
+      }
+      .button-danger {
+        background: var(--danger);
+      }
       .pill {
         display: inline-flex;
         align-items: center;
@@ -385,7 +481,7 @@ export class HttpServerService {
         <div class="panel-header">
           <div>
             <h2 class="panel-title">Models</h2>
-            <div class="panel-note">Creation time, current status, and recent training or prediction activity.</div>
+            <div class="panel-note">Creation time, current status, and recent training activity.</div>
           </div>
         </div>
         <div class="table-wrap">
@@ -396,9 +492,8 @@ export class HttpServerService {
               <th>Status</th>
               <th>Created</th>
               <th>Train Count</th>
-              <th>Predict Count</th>
               <th>Last Train</th>
-              <th>Last Predict</th>
+              <th>Actions</th>
             </tr>
           </thead>
           <tbody id="models-body"></tbody>
@@ -409,7 +504,7 @@ export class HttpServerService {
         <div class="panel-header">
           <div>
             <h2 class="panel-title">Recent Jobs</h2>
-            <div class="panel-note">Most recent create, train, and predict jobs with error visibility.</div>
+            <div class="panel-note">Most recent create and train jobs with error visibility.</div>
           </div>
         </div>
         <div class="table-wrap">
@@ -447,6 +542,7 @@ const summaryElement = document.getElementById("summary-cards");
 const modelsElement = document.getElementById("models-body");
 const jobsElement = document.getElementById("jobs-body");
 const refreshButton = document.getElementById("refresh-button");
+let deletingModelId = null;
 const dateTimeFormatter = new Intl.DateTimeFormat(undefined, {
   dateStyle: "medium",
   timeStyle: "short",
@@ -491,19 +587,19 @@ const renderSummary = (summary) => {
 
 const renderModels = (models) => {
   if (models.length === 0) {
-    modelsElement.innerHTML = "<tr><td class='empty' colspan='7'>No models have been created yet.</td></tr>";
+    modelsElement.innerHTML = "<tr><td class='empty' colspan='6'>No models have been created yet.</td></tr>";
     return;
   }
 
   modelsElement.innerHTML = models.map((model) => {
+    const isDeleting = deletingModelId === model.modelId;
     return "<tr>" +
       "<td><a class='model-link' href='/api/models/" + encodeURIComponent(model.modelId) + "' target='_blank' rel='noreferrer'>" + escapeHtml(model.modelId) + "</a><span class='secondary mono'>" + escapeHtml(model.definitionPath) + "</span></td>" +
       "<td>" + renderStatusPill(model.status) + "</td>" +
       "<td>" + formatDate(model.createdAt) + "</td>" +
       "<td>" + escapeHtml(model.trainingCount) + "</td>" +
-      "<td>" + escapeHtml(model.predictionCount) + "</td>" +
       "<td>" + formatDate(model.lastTrainingAt) + "</td>" +
-      "<td>" + formatDate(model.lastPredictionAt) + "</td>" +
+      "<td><button class='button-danger' type='button' data-action='delete-model' data-model-id='" + escapeHtml(model.modelId) + "'" + (isDeleting ? " disabled" : "") + ">" + (isDeleting ? "Deleting..." : "Delete") + "</button></td>" +
       "</tr>";
   }).join("");
 };
@@ -529,6 +625,35 @@ const renderJobs = (jobs) => {
   }).join("");
 };
 
+const deleteModel = async (modelId) => {
+  const shouldDeleteModel = window.confirm("Delete model '" + modelId + "'? This also removes its stored artifact and job history.");
+
+  if (!shouldDeleteModel) {
+    return;
+  }
+
+  deletingModelId = modelId;
+  feedbackElement.textContent = "Deleting model " + modelId + "...";
+
+  try {
+    const response = await fetch("/api/models/" + encodeURIComponent(modelId), {
+      method: "DELETE",
+    });
+
+    if (!response.ok) {
+      const payload = await response.json();
+      throw new Error(typeof payload.message === "string" ? payload.message : "delete model request failed");
+    }
+
+    await loadState();
+    feedbackElement.textContent = "Deleted model " + modelId;
+  } catch (error) {
+    feedbackElement.textContent = error instanceof Error ? error.message : "Unknown delete model error";
+  } finally {
+    deletingModelId = null;
+  }
+};
+
 const loadState = async () => {
   feedbackElement.textContent = "Loading state…";
   try {
@@ -548,6 +673,22 @@ const loadState = async () => {
 
 refreshButton?.addEventListener("click", () => {
   void loadState();
+});
+
+modelsElement?.addEventListener("click", (event) => {
+  const element = event.target instanceof HTMLElement ? event.target.closest("[data-action='delete-model']") : null;
+
+  if (!element) {
+    return;
+  }
+
+  const modelId = element.getAttribute("data-model-id");
+
+  if (!modelId || deletingModelId) {
+    return;
+  }
+
+  void deleteModel(modelId);
 });
 
 void loadState();
@@ -635,6 +776,24 @@ setInterval(() => {
     return response;
   }
 
+  private handleDeleteModelRequest(context: Context): Response {
+    const modelId = this.requirePathParam(context, "modelId");
+    const deleteResult = this.modelService.deleteModel(modelId);
+    let response: Response;
+
+    if (deleteResult.kind === "deleted") {
+      response = context.body(null, 204);
+    } else {
+      if (deleteResult.kind === "not_found") {
+        response = this.createJsonResponse(context, this.buildJsonError("not_found", deleteResult.message), 404);
+      } else {
+        response = this.createJsonResponse(context, this.buildJsonError("conflict", deleteResult.message), 409);
+      }
+    }
+
+    return response;
+  }
+
   private buildCreateModelRequest(payload: Record<string, unknown>): CreateModelRequest {
     const modelId = typeof payload.modelId === "string" ? payload.modelId : "";
     const definition = payload.definition;
@@ -651,10 +810,17 @@ setInterval(() => {
       throw new Error("invalid_request: definition.format must be keras-sequential or keras-functional");
     }
 
-    const request: CreateModelRequest = {
-      definition: definition as KerasModelDefinition,
-      modelId,
-    };
+    const metadata = this.validateTrainingMetadata(payload.metadata, "metadata");
+    const request: CreateModelRequest = metadata
+      ? {
+          definition: definition as KerasModelDefinition,
+          metadata,
+          modelId,
+        }
+      : {
+          definition: definition as KerasModelDefinition,
+          modelId,
+        };
     return request;
   }
 
@@ -683,13 +849,36 @@ setInterval(() => {
       throw new Error("invalid_request: trainingInput is required");
     }
 
+    const trainingInputPayload = payload.trainingInput as Record<string, unknown>;
+    const sampleWeights = this.validateSampleWeights(trainingInputPayload.sampleWeights, trainingInputPayload.targets, "trainingInput.sampleWeights");
+    const validationSampleWeights = this.validateSampleWeights(
+      trainingInputPayload.validationSampleWeights,
+      trainingInputPayload.validationTargets,
+      "trainingInput.validationSampleWeights",
+    );
+    const trainingInput: CreateTrainingJobRequest["trainingInput"] = {
+      inputs: trainingInputPayload.inputs,
+      ...(sampleWeights ? { sampleWeights } : {}),
+      targets: trainingInputPayload.targets,
+      ...(trainingInputPayload.validationInputs !== undefined ? { validationInputs: trainingInputPayload.validationInputs } : {}),
+      ...(validationSampleWeights ? { validationSampleWeights } : {}),
+      ...(trainingInputPayload.validationTargets !== undefined ? { validationTargets: trainingInputPayload.validationTargets } : {}),
+    };
+
+    if (validationSampleWeights && (trainingInput.validationInputs === undefined || trainingInput.validationTargets === undefined)) {
+      throw new Error("invalid_request: trainingInput.validationSampleWeights requires validationInputs and validationTargets");
+    }
+
+    const modelMetadata = this.validateTrainingMetadata(payload.modelMetadata, "modelMetadata");
     const request: CreateTrainingJobRequest = this.isRecord(payload.fitConfig)
       ? {
           fitConfig: payload.fitConfig as NonNullable<CreateTrainingJobRequest["fitConfig"]>,
-          trainingInput: payload.trainingInput as CreateTrainingJobRequest["trainingInput"],
+          ...(modelMetadata ? { modelMetadata } : {}),
+          trainingInput,
         }
       : {
-          trainingInput: payload.trainingInput as CreateTrainingJobRequest["trainingInput"],
+          ...(modelMetadata ? { modelMetadata } : {}),
+          trainingInput,
         };
     return request;
   }
@@ -830,6 +1019,7 @@ setInterval(() => {
     app.get("/api/models", this.handleListModelsRequest.bind(this));
     app.get("/api/models/:modelId", this.handleGetModelRequest.bind(this));
     app.post("/api/models", this.handleCreateModelRequest.bind(this));
+    app.delete("/api/models/:modelId", this.handleDeleteModelRequest.bind(this));
     app.post("/api/models/:modelId/training-jobs", this.handleCreateTrainingJobRequest.bind(this));
     app.post("/api/models/:modelId/prediction-jobs", this.handleCreatePredictionJobRequest.bind(this));
     app.get("/api/jobs", this.handleListJobsRequest.bind(this));

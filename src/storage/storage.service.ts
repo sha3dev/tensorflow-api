@@ -8,7 +8,7 @@ import Database from "better-sqlite3";
  * @section imports:internals
  */
 
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 
 import config from "../config.ts";
@@ -23,6 +23,7 @@ type InsertModelRecordCommand = {
   artifactPath: string;
   createdAt: string;
   definitionPath: string;
+  metadata: Record<string, unknown> | null;
   modelId: string;
   status: ModelStatus;
   updatedAt: string;
@@ -43,6 +44,11 @@ type JobStatusSummary = {
   failedJobCount: number;
   queuedJobCount: number;
   runningJobCount: number;
+};
+
+type ModelDeletionPlan = {
+  jobDirectoryPaths: string[];
+  modelDirectoryPath: string;
 };
 
 /**
@@ -90,17 +96,49 @@ export class StorageService {
     this.ensureDirectoryExists(dirname(targetPath));
   }
 
+  private hasTableColumn(tableName: string, columnName: string): boolean {
+    const rows = this.database.prepare(`PRAGMA table_info(${tableName})`).all() as Record<string, unknown>[];
+    const hasColumn = rows.some((row) => {
+      return row.name === columnName;
+    });
+    return hasColumn;
+  }
+
+  private parseModelMetadata(metadataValue: unknown): Record<string, unknown> | null {
+    let metadata: Record<string, unknown> | null = null;
+
+    if (typeof metadataValue === "string") {
+      const parsedValue = JSON.parse(metadataValue) as unknown;
+
+      if (parsedValue && typeof parsedValue === "object" && !Array.isArray(parsedValue)) {
+        metadata = parsedValue as Record<string, unknown>;
+      }
+    }
+
+    return metadata;
+  }
+
+  private buildModelDeletionPlan(modelId: string): ModelDeletionPlan {
+    const jobRows = this.database.prepare("SELECT job_id FROM job_record WHERE model_id = ?").all(modelId) as Record<string, unknown>[];
+    const jobDirectoryPaths = jobRows.map((row) => {
+      return this.getJobDirectory(String(row.job_id));
+    });
+    const deletionPlan: ModelDeletionPlan = {
+      jobDirectoryPaths,
+      modelDirectoryPath: this.getModelDirectory(modelId),
+    };
+    return deletionPlan;
+  }
+
   private toModelRecord(row: Record<string, unknown>): ModelRecord {
     const modelRecord: ModelRecord = {
       artifactPath: String(row.artifact_path),
       createdAt: String(row.created_at),
       definitionPath: String(row.definition_path),
-      lastPredictionAt: row.last_prediction_at ? String(row.last_prediction_at) : null,
-      lastPredictionJobId: row.last_prediction_job_id ? String(row.last_prediction_job_id) : null,
       lastTrainingAt: row.last_training_at ? String(row.last_training_at) : null,
       lastTrainingJobId: row.last_training_job_id ? String(row.last_training_job_id) : null,
+      metadata: this.parseModelMetadata(row.metadata_json),
       modelId: String(row.model_id),
-      predictionCount: Number(row.prediction_count),
       status: row.status as ModelStatus,
       trainingCount: Number(row.training_count),
       updatedAt: String(row.updated_at),
@@ -145,6 +183,7 @@ export class StorageService {
         last_prediction_at TEXT,
         last_training_job_id TEXT,
         last_prediction_job_id TEXT,
+        metadata_json TEXT,
         definition_path TEXT NOT NULL,
         artifact_path TEXT NOT NULL
       );
@@ -162,6 +201,10 @@ export class StorageService {
         result_path TEXT NOT NULL
       );
     `);
+
+    if (!this.hasTableColumn("model_record", "metadata_json")) {
+      this.database.exec("ALTER TABLE model_record ADD COLUMN metadata_json TEXT");
+    }
   }
 
   public close(): void {
@@ -216,6 +259,12 @@ export class StorageService {
     return hasFile;
   }
 
+  public deleteDirectoryIfPresent(targetPath: string): void {
+    if (this.hasFile(targetPath) || existsSync(targetPath)) {
+      rmSync(targetPath, { force: true, recursive: true });
+    }
+  }
+
   public insertModelRecord(command: InsertModelRecordCommand): boolean {
     const executionResult = this.database
       .prepare(`
@@ -230,11 +279,20 @@ export class StorageService {
           last_prediction_at,
           last_training_job_id,
           last_prediction_job_id,
+          metadata_json,
           definition_path,
           artifact_path
-        ) VALUES (?, ?, ?, ?, 0, 0, NULL, NULL, NULL, NULL, ?, ?)
+        ) VALUES (?, ?, ?, ?, 0, 0, NULL, NULL, NULL, NULL, ?, ?, ?)
       `)
-      .run(command.modelId, command.createdAt, command.updatedAt, command.status, command.definitionPath, command.artifactPath);
+      .run(
+        command.modelId,
+        command.createdAt,
+        command.updatedAt,
+        command.status,
+        command.metadata ? JSON.stringify(command.metadata) : null,
+        command.definitionPath,
+        command.artifactPath,
+      );
     const hasInsertedRecord = executionResult.changes > 0;
     return hasInsertedRecord;
   }
@@ -270,14 +328,6 @@ export class StorageService {
     this.database.prepare("UPDATE model_record SET last_training_job_id = ?, updated_at = ? WHERE model_id = ?").run(jobId, updatedAt, modelId);
   }
 
-  public markModelPredictionQueued(modelId: string, jobId: string, updatedAt: string): void {
-    this.database.prepare("UPDATE model_record SET last_prediction_job_id = ?, updated_at = ? WHERE model_id = ?").run(jobId, updatedAt, modelId);
-  }
-
-  public markModelPredictionStarted(modelId: string, jobId: string, updatedAt: string): void {
-    this.database.prepare("UPDATE model_record SET last_prediction_job_id = ?, updated_at = ? WHERE model_id = ?").run(jobId, updatedAt, modelId);
-  }
-
   public markModelTrainingSucceeded(modelId: string, jobId: string, updatedAt: string): void {
     this.database
       .prepare(`
@@ -291,17 +341,73 @@ export class StorageService {
       .run(updatedAt, jobId, updatedAt, modelId);
   }
 
-  public markModelPredictionSucceeded(modelId: string, jobId: string, updatedAt: string): void {
-    this.database
-      .prepare(`
-        UPDATE model_record
-        SET prediction_count = prediction_count + 1,
-            last_prediction_at = ?,
-            last_prediction_job_id = ?,
-            updated_at = ?
-        WHERE model_id = ?
-      `)
-      .run(updatedAt, jobId, updatedAt, modelId);
+  public completeTrainingJob(jobId: string, modelId: string, finishedAt: string, modelMetadata?: Record<string, unknown>): void {
+    const transaction = this.database.transaction(
+      (trainingJobId: string, trainingModelId: string, completedAt: string, metadata: Record<string, unknown> | undefined) => {
+        this.database
+          .prepare("UPDATE job_record SET status = ?, finished_at = ?, error_code = NULL, error_message = NULL WHERE job_id = ?")
+          .run("succeeded", completedAt, trainingJobId);
+
+        if (metadata) {
+          this.database
+            .prepare(`
+            UPDATE model_record
+            SET training_count = training_count + 1,
+                last_training_at = ?,
+                last_training_job_id = ?,
+                metadata_json = ?,
+                updated_at = ?
+            WHERE model_id = ?
+          `)
+            .run(completedAt, trainingJobId, JSON.stringify(metadata), completedAt, trainingModelId);
+        } else {
+          this.database
+            .prepare(`
+            UPDATE model_record
+            SET training_count = training_count + 1,
+                last_training_at = ?,
+                last_training_job_id = ?,
+                updated_at = ?
+            WHERE model_id = ?
+          `)
+            .run(completedAt, trainingJobId, completedAt, trainingModelId);
+        }
+      },
+    );
+
+    transaction(jobId, modelId, finishedAt, modelMetadata);
+  }
+
+  public hasActiveJobsForModel(modelId: string): boolean {
+    const row = this.database
+      .prepare("SELECT COUNT(*) AS active_job_count FROM job_record WHERE model_id = ? AND status IN (?, ?)")
+      .get(modelId, "queued", "running") as Record<string, unknown>;
+    const hasActiveJobs = Number(row.active_job_count) > 0;
+    return hasActiveJobs;
+  }
+
+  public deleteModel(modelId: string): boolean {
+    const modelRecord = this.getModelRecord(modelId);
+    let hasDeletedModel = false;
+
+    if (modelRecord) {
+      const deletionPlan = this.buildModelDeletionPlan(modelId);
+      const transaction = this.database.transaction((deletedModelId: string) => {
+        this.database.prepare("DELETE FROM job_record WHERE model_id = ?").run(deletedModelId);
+        this.database.prepare("DELETE FROM model_record WHERE model_id = ?").run(deletedModelId);
+      });
+
+      transaction(modelId);
+
+      for (const jobDirectoryPath of deletionPlan.jobDirectoryPaths) {
+        this.deleteDirectoryIfPresent(jobDirectoryPath);
+      }
+
+      this.deleteDirectoryIfPresent(deletionPlan.modelDirectoryPath);
+      hasDeletedModel = true;
+    }
+
+    return hasDeletedModel;
   }
 
   public insertJobRecord(command: InsertJobRecordCommand): void {

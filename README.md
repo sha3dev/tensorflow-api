@@ -31,7 +31,7 @@ The runtime keeps:
 - create declarative Keras models from JSON
 - queue training jobs and run prediction on the fast path without file-based job orchestration
 - expose model and job metadata through JSON endpoints
-- serve a tiny SPA dashboard backed by `/api/state`
+- serve a tiny SPA dashboard backed by `/api/state`, including model deletion
 - recover interrupted running jobs as failed after restart
 
 ## Setup
@@ -150,7 +150,9 @@ print(json.dumps(payload))
 
 ### Training payload notes
 
-`trainingInput.inputs`, `trainingInput.targets`, `validationInputs`, and `validationTargets` are sent as plain JSON arrays. The Python worker converts them to tensors before calling Keras.
+`trainingInput.inputs`, `trainingInput.targets`, `validationInputs`, and `validationTargets` are sent as plain JSON arrays for single-output models or keyed JSON objects for multi-output models. The Python worker converts them to tensors before calling Keras.
+
+`trainingInput.sampleWeights` and `trainingInput.validationSampleWeights` accept either a numeric array or an object keyed by output name. `modelMetadata` replaces the persisted model metadata only after a training job succeeds.
 
 Current `fitConfig` keys supported by the worker:
 
@@ -170,6 +172,10 @@ curl -X POST http://localhost:3000/api/models \
   -H "content-type: application/json" \
   -d '{
     "modelId": "demo-model",
+    "metadata": {
+      "featureSetVersion": 1,
+      "task": "forecast"
+    },
     "definition": {
       "format": "keras-sequential",
       "modelConfig": {
@@ -193,9 +199,20 @@ Queue training:
 curl -X POST http://localhost:3000/api/models/demo-model/training-jobs \
   -H "content-type: application/json" \
   -d '{
+    "modelMetadata": {
+      "featureSetVersion": 2,
+      "trainedFor": "session-a"
+    },
     "trainingInput": {
       "inputs": [[1], [2]],
-      "targets": [[1], [0]]
+      "targets": {
+        "classification": [[1, 0], [0, 1]],
+        "regression": [[0.12], [0.08]]
+      },
+      "sampleWeights": {
+        "classification": [2, 0.5],
+        "regression": [1, 1]
+      }
     },
     "fitConfig": {
       "epochs": 2
@@ -213,6 +230,19 @@ curl -X POST http://localhost:3000/api/models/demo-model/prediction-jobs \
       "inputs": [[3], [4]]
     }
   }'
+```
+
+Example multi-output prediction response:
+
+```json
+{
+  "modelId": "demo-model",
+  "outputs": {
+    "classification": [[1.2, -0.4, 0.1]],
+    "regression": [[0.123]]
+  },
+  "status": "predicted"
+}
 ```
 
 Read the dashboard state:
@@ -423,7 +453,7 @@ Response shape:
 
 ### `POST /api/models`
 
-Creates a model record and queues Python materialization.
+Creates a model record, persists optional opaque `metadata`, and queues Python materialization.
 
 Status:
 
@@ -448,9 +478,19 @@ Status:
 - `200`
 - `404` when the model does not exist
 
+### `DELETE /api/models/:modelId`
+
+Deletes a model, its persisted artifact directory, and its recorded job history. The request is rejected while the model still has queued or running jobs.
+
+Status:
+
+- `204`
+- `404` when the model does not exist
+- `409` when the model has active jobs
+
 ### `POST /api/models/:modelId/training-jobs`
 
-Queues model training.
+Queues model training. Supports `modelMetadata`, `sampleWeights`, and `validationSampleWeights`.
 
 Status:
 
@@ -461,7 +501,7 @@ Status:
 
 ### `POST /api/models/:modelId/prediction-jobs`
 
-Runs model prediction synchronously and returns the prediction payload in the same response. Prediction does not go through the queued-job pipeline. The service records prediction history after the response so the HTTP critical path stays as short as possible.
+Runs model prediction synchronously and returns the prediction payload in the same response. For multi-output models, `outputs` preserves the real Keras output names.
 
 Status:
 
@@ -495,7 +535,7 @@ Status:
 
 ### `GET /api/jobs/:jobId/result`
 
-Returns the JSON job result for successful jobs.
+Returns the JSON job result for successful jobs. Successful training jobs include `modelId`, `status: "succeeded"`, `trainedAt`, and optional `history`.
 
 Status:
 
@@ -619,6 +659,7 @@ Request type for model creation.
 type CreateModelRequest = {
   modelId: string;
   definition: KerasModelDefinition;
+  metadata?: Record<string, unknown>;
 };
 ```
 
@@ -628,10 +669,13 @@ Request type for queuing training.
 
 ```ts
 type CreateTrainingJobRequest = {
+  modelMetadata?: Record<string, unknown>;
   trainingInput: {
     inputs: unknown;
+    sampleWeights?: TrainingSampleWeight;
     targets: unknown;
     validationInputs?: unknown;
+    validationSampleWeights?: TrainingSampleWeight;
     validationTargets?: unknown;
   };
   fitConfig?: {
@@ -641,6 +685,14 @@ type CreateTrainingJobRequest = {
     validationSplit?: number;
   };
 };
+```
+
+### `TrainingSampleWeight`
+
+Training sample weight shape supported by single-output and multi-output jobs.
+
+```ts
+type TrainingSampleWeight = number[] | Record<string, number[]>;
 ```
 
 ### `CreatePredictionJobRequest`
@@ -666,11 +718,9 @@ type ModelRecord = {
   createdAt: string;
   updatedAt: string;
   trainingCount: number;
-  predictionCount: number;
   lastTrainingAt: string | null;
-  lastPredictionAt: string | null;
   lastTrainingJobId: string | null;
-  lastPredictionJobId: string | null;
+  metadata: Record<string, unknown> | null;
   definitionPath: string;
   artifactPath: string;
 };
@@ -684,7 +734,7 @@ Persisted job metadata returned by job endpoints.
 type JobRecord = {
   jobId: string;
   modelId: string;
-  jobType: "create_model" | "train_model" | "predict_model";
+  jobType: "create_model" | "train_model";
   status: "queued" | "running" | "succeeded" | "failed";
   createdAt: string;
   startedAt: string | null;
@@ -702,6 +752,31 @@ Opaque JSON result payload returned by `GET /api/jobs/:jobId/result`.
 
 ```ts
 type JobResultPayload = Record<string, unknown>;
+```
+
+### `PredictionResultPayload`
+
+Prediction response payload returned by `POST /api/models/:modelId/prediction-jobs`.
+
+```ts
+type PredictionResultPayload = {
+  modelId: string;
+  outputs: Record<string, unknown> | unknown;
+  status: "predicted";
+};
+```
+
+### `TrainingJobResultPayload`
+
+Successful training job result returned by `GET /api/jobs/:jobId/result`.
+
+```ts
+type TrainingJobResultPayload = {
+  modelId: string;
+  status: "succeeded";
+  trainedAt: string;
+  history?: Record<string, unknown>;
+};
 ```
 
 ### `DashboardStatePayload`

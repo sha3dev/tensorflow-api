@@ -23,12 +23,14 @@ type TestHarness = {
 };
 
 type FakeExecutorOptions = {
-  failingAction?: PythonJobCommand["action"];
+  failingAction?: PythonJobCommand["action"] | "predict-model";
+  predictionResult?: Record<string, unknown>;
+  tempRoot?: string;
 };
 
 type StatePayload = {
   models: Array<{
-    predictionCount: number;
+    metadata: Record<string, unknown> | null;
     trainingCount: number;
   }>;
   summary: {
@@ -54,12 +56,6 @@ function createFakeExecutor(options?: FakeExecutorOptions): PythonJobExecutor {
     if (command.action === "train-model") {
       writeFileSync(command.resultPath, JSON.stringify({ history: { loss: [0.5, 0.2] }, modelId: payload.modelId, status: "trained" }), "utf8");
     }
-
-    if (command.action === "predict-model") {
-      const predictionInput = payload.predictionInput as { inputs?: unknown };
-      writeFileSync(command.resultPath, JSON.stringify({ modelId: payload.modelId, outputs: predictionInput.inputs || [], status: "predicted" }), "utf8");
-    }
-
     return { errorMessage: null, isSuccess: true };
   };
 }
@@ -70,42 +66,21 @@ function createFakePredictionExecutor(options?: FakeExecutorOptions): PythonPred
       return { errorMessage: "simulated predict-model failure", isSuccess: false };
     }
 
+    const result = options?.predictionResult || {
+      modelId: command.modelId,
+      outputs: command.predictionInput.inputs,
+      status: "predicted",
+    };
+
     return {
       isSuccess: true,
-      result: {
-        modelId: command.modelId,
-        outputs: command.predictionInput.inputs,
-        status: "predicted",
-      },
+      result,
     };
   };
 }
 
-async function waitForPredictionJob(harness: TestHarness, modelId: string): Promise<JobRecord> {
-  let predictionJob: JobRecord | undefined;
-
-  for (let attemptIndex = 0; attemptIndex < 20; attemptIndex += 1) {
-    const jobsResponse = await fetch(`${harness.baseUrl}/api/jobs?modelId=${encodeURIComponent(modelId)}`);
-    const jobsPayload = (await jobsResponse.json()) as JobRecord[];
-    predictionJob = jobsPayload.find((jobRecord) => {
-      return jobRecord.jobType === "predict_model";
-    });
-
-    if (predictionJob) {
-      break;
-    }
-
-    await new Promise<void>((resolve) => {
-      setTimeout(resolve, 10);
-    });
-  }
-
-  assert.ok(predictionJob);
-  return predictionJob;
-}
-
 async function createHarness(options?: FakeExecutorOptions): Promise<TestHarness> {
-  const tempRoot = mkdtempSync(join(tmpdir(), "tensorflow-api-"));
+  const tempRoot = options?.tempRoot || mkdtempSync(join(tmpdir(), "tensorflow-api-"));
   const storageRoot = join(tempRoot, "storage");
   const sqlitePath = join(tempRoot, "storage", "runtime.sqlite");
   const storageService = new StorageService(sqlitePath, storageRoot);
@@ -157,6 +132,20 @@ async function createHarness(options?: FakeExecutorOptions): Promise<TestHarness
   };
 }
 
+async function createReadyModel(harness: TestHarness, modelId: string, metadata?: Record<string, unknown>): Promise<void> {
+  await fetch(`${harness.baseUrl}/api/models`, {
+    body: JSON.stringify({
+      definition: { format: "keras-sequential", modelConfig: { layers: [] } },
+      metadata,
+      modelId,
+    }),
+    headers: { "content-type": "application/json" },
+    method: "POST",
+  });
+
+  await harness.jobService.processNextQueuedJob();
+}
+
 test("service exposes root metadata, dashboard shell, dashboard asset, and empty state", async () => {
   const harness = await createHarness();
 
@@ -181,6 +170,7 @@ test("service exposes root metadata, dashboard shell, dashboard asset, and empty
     assert.match(dashboardMarkup, /TensorFlow API Dashboard/);
     assert.equal(assetResponse.status, 200);
     assert.match(assetSource, /\/api\/state/);
+    assert.match(assetSource, /delete-model/);
     assert.equal(stateResponse.status, 200);
     assert.deepEqual(statePayload, {
       models: [],
@@ -202,6 +192,7 @@ test("service creates models, exposes state, and rejects duplicates", async () =
           format: "keras-sequential",
           modelConfig: { layers: [{ class_name: "InputLayer", config: { batch_input_shape: [null, 1], dtype: "float32" } }] },
         },
+        metadata: { market: "alpha", version: 1 },
         modelId: "alpha-model",
       }),
       headers: { "content-type": "application/json" },
@@ -219,16 +210,22 @@ test("service creates models, exposes state, and rejects duplicates", async () =
     const duplicatePayload = await duplicateResponse.json();
     const stateResponse = await fetch(`${harness.baseUrl}/api/state`);
     const statePayload = await stateResponse.json();
+    const modelResponse = await fetch(`${harness.baseUrl}/api/models/alpha-model`);
+    const modelPayload = await modelResponse.json();
 
     assert.equal(createResponse.status, 201);
     assert.equal(createPayload.kind, "created");
     assert.equal(createPayload.model.status, "pending");
+    assert.deepEqual(createPayload.model.metadata, { market: "alpha", version: 1 });
     assert.equal(duplicateResponse.status, 409);
     assert.deepEqual(duplicatePayload, {
       code: "conflict",
       message: "model 'alpha-model' already exists",
     });
+    assert.equal(modelResponse.status, 200);
+    assert.deepEqual(modelPayload.metadata, { market: "alpha", version: 1 });
     assert.equal(statePayload.models.length, 1);
+    assert.deepEqual(statePayload.models[0].metadata, { market: "alpha", version: 1 });
     assert.equal(statePayload.summary.modelCount, 1);
     assert.equal(statePayload.summary.queuedJobCount, 1);
   } finally {
@@ -236,7 +233,7 @@ test("service creates models, exposes state, and rejects duplicates", async () =
   }
 });
 
-test("service processes create, train, and prediction jobs and exposes results", async () => {
+test("service processes create and train jobs while prediction stays synchronous", async () => {
   const harness = await createHarness();
 
   try {
@@ -270,9 +267,6 @@ test("service processes create, train, and prediction jobs and exposes results",
 
     await harness.jobService.processNextQueuedJob();
 
-    const predictionJob = await waitForPredictionJob(harness, "beta-model");
-    const predictionResultResponse = await fetch(`${harness.baseUrl}/api/jobs/${predictionJob?.jobId}/result`);
-    const predictionResultPayload = await predictionResultResponse.json();
     const jobsResponse = await fetch(`${harness.baseUrl}/api/jobs?modelId=beta-model`);
     const jobsPayload = (await jobsResponse.json()) as JobRecord[];
     const stateResponse = await fetch(`${harness.baseUrl}/api/state`);
@@ -290,22 +284,187 @@ test("service processes create, train, and prediction jobs and exposes results",
       outputs: [[3], [4]],
       status: "predicted",
     });
-    assert.equal(predictionResultResponse.status, 200);
-    assert.deepEqual(predictionResultPayload, {
-      modelId: "beta-model",
-      outputs: [[3], [4]],
-      status: "predicted",
-    });
     assert.equal(jobsResponse.status, 200);
-    assert.equal(jobsPayload.length, 3);
-    assert.equal(predictionJob?.status, "succeeded");
+    assert.equal(jobsPayload.length, 2);
     assert.equal(creationJobResponse.status, 200);
     assert.equal(creationJobPayload.status, "succeeded");
     assert.equal(statePayload.summary.modelCount, 1);
     assert.equal(statePayload.summary.queuedJobCount, 0);
     assert.equal(statePayload.models.length, 1);
     assert.equal(statePayload.models[0]?.trainingCount, 1);
-    assert.equal(statePayload.models[0]?.predictionCount, 1);
+  } finally {
+    await harness.close();
+  }
+});
+
+test("service updates model metadata only after successful training", async () => {
+  const harness = await createHarness();
+
+  try {
+    await createReadyModel(harness, "metadata-model", { version: 1 });
+
+    const trainingResponse = await fetch(`${harness.baseUrl}/api/models/metadata-model/training-jobs`, {
+      body: JSON.stringify({
+        modelMetadata: { version: 2, window: 128 },
+        trainingInput: {
+          inputs: [[1], [2]],
+          sampleWeights: [1, 0.5],
+          targets: [[0], [1]],
+        },
+      }),
+      headers: { "content-type": "application/json" },
+      method: "POST",
+    });
+    const trainingPayload = await trainingResponse.json();
+
+    await harness.jobService.processNextQueuedJob();
+
+    const modelResponse = await fetch(`${harness.baseUrl}/api/models/metadata-model`);
+    const modelPayload = await modelResponse.json();
+    const trainingResultResponse = await fetch(`${harness.baseUrl}/api/jobs/${trainingPayload.jobId}/result`);
+    const trainingResultPayload = await trainingResultResponse.json();
+
+    assert.equal(trainingResponse.status, 202);
+    assert.equal(modelResponse.status, 200);
+    assert.deepEqual(modelPayload.metadata, { version: 2, window: 128 });
+    assert.equal(trainingResultResponse.status, 200);
+    assert.equal(trainingResultPayload.modelId, "metadata-model");
+    assert.equal(trainingResultPayload.status, "succeeded");
+    assert.equal(typeof trainingResultPayload.trainedAt, "string");
+    assert.deepEqual(trainingResultPayload.history, { loss: [0.5, 0.2] });
+  } finally {
+    await harness.close();
+  }
+});
+
+test("service deletes a model and removes it from the dashboard state", async () => {
+  const harness = await createHarness();
+
+  try {
+    await createReadyModel(harness, "delete-model", { family: "forecast" });
+
+    const deleteResponse = await fetch(`${harness.baseUrl}/api/models/delete-model`, {
+      method: "DELETE",
+    });
+    const modelResponse = await fetch(`${harness.baseUrl}/api/models/delete-model`);
+    const modelPayload = await modelResponse.json();
+    const jobsResponse = await fetch(`${harness.baseUrl}/api/jobs?modelId=delete-model`);
+    const jobsPayload = await jobsResponse.json();
+    const stateResponse = await fetch(`${harness.baseUrl}/api/state`);
+    const statePayload = (await stateResponse.json()) as StatePayload;
+
+    assert.equal(deleteResponse.status, 204);
+    assert.equal(modelResponse.status, 404);
+    assert.deepEqual(modelPayload, {
+      code: "not_found",
+      message: "model 'delete-model' was not found",
+    });
+    assert.deepEqual(jobsPayload, []);
+    assert.equal(statePayload.summary.modelCount, 0);
+    assert.deepEqual(statePayload.models, []);
+  } finally {
+    await harness.close();
+  }
+});
+
+test("service rejects deleting a model with active jobs", async () => {
+  const harness = await createHarness();
+
+  try {
+    await createReadyModel(harness, "busy-model");
+
+    const trainingResponse = await fetch(`${harness.baseUrl}/api/models/busy-model/training-jobs`, {
+      body: JSON.stringify({ trainingInput: { inputs: [[1]], targets: [[1]] } }),
+      headers: { "content-type": "application/json" },
+      method: "POST",
+    });
+    const deleteResponse = await fetch(`${harness.baseUrl}/api/models/busy-model`, {
+      method: "DELETE",
+    });
+    const deletePayload = await deleteResponse.json();
+    const modelResponse = await fetch(`${harness.baseUrl}/api/models/busy-model`);
+    const modelPayload = await modelResponse.json();
+
+    assert.equal(trainingResponse.status, 202);
+    assert.equal(deleteResponse.status, 409);
+    assert.deepEqual(deletePayload, {
+      code: "conflict",
+      message: "model 'busy-model' has active jobs and cannot be deleted",
+    });
+    assert.equal(modelResponse.status, 200);
+    assert.equal(modelPayload.modelId, "busy-model");
+  } finally {
+    await harness.close();
+  }
+});
+
+test("service keeps prior metadata when training fails", async () => {
+  const harness = await createHarness({ failingAction: "train-model" });
+
+  try {
+    await createReadyModel(harness, "failed-training-model", { version: 1 });
+
+    const trainingResponse = await fetch(`${harness.baseUrl}/api/models/failed-training-model/training-jobs`, {
+      body: JSON.stringify({
+        modelMetadata: { version: 2 },
+        trainingInput: {
+          inputs: [[1]],
+          targets: [[1]],
+        },
+      }),
+      headers: { "content-type": "application/json" },
+      method: "POST",
+    });
+    const trainingPayload = await trainingResponse.json();
+
+    await harness.jobService.processNextQueuedJob();
+
+    const modelResponse = await fetch(`${harness.baseUrl}/api/models/failed-training-model`);
+    const modelPayload = await modelResponse.json();
+    const failedJobResponse = await fetch(`${harness.baseUrl}/api/jobs/${trainingPayload.jobId}`);
+    const failedJobPayload = await failedJobResponse.json();
+
+    assert.equal(trainingResponse.status, 202);
+    assert.equal(modelResponse.status, 200);
+    assert.deepEqual(modelPayload.metadata, { version: 1 });
+    assert.equal(failedJobResponse.status, 200);
+    assert.equal(failedJobPayload.status, "failed");
+  } finally {
+    await harness.close();
+  }
+});
+
+test("service returns named outputs for multi-output prediction", async () => {
+  const harness = await createHarness({
+    predictionResult: {
+      modelId: "multi-output-model",
+      outputs: {
+        classification: [[1.2, -0.4, 0.1]],
+        regression: [[0.123]],
+      },
+      status: "predicted",
+    },
+  });
+
+  try {
+    await createReadyModel(harness, "multi-output-model");
+
+    const predictionResponse = await fetch(`${harness.baseUrl}/api/models/multi-output-model/prediction-jobs`, {
+      body: JSON.stringify({ predictionInput: { inputs: [[3], [4]] } }),
+      headers: { "content-type": "application/json" },
+      method: "POST",
+    });
+    const predictionPayload = await predictionResponse.json();
+
+    assert.equal(predictionResponse.status, 200);
+    assert.deepEqual(predictionPayload, {
+      modelId: "multi-output-model",
+      outputs: {
+        classification: [[1.2, -0.4, 0.1]],
+        regression: [[0.123]],
+      },
+      status: "predicted",
+    });
   } finally {
     await harness.close();
   }
@@ -364,11 +523,9 @@ test("service marks failed jobs when the Python worker reports an error", async 
       method: "POST",
     });
     const predictionPayload = await predictionResponse.json();
-    const failedPredictionJob = await waitForPredictionJob(harness, "gamma-model");
     const jobsResponse = await fetch(`${harness.baseUrl}/api/jobs?modelId=gamma-model`);
+    const jobsPayload = (await jobsResponse.json()) as JobRecord[];
 
-    const failedJobResponse = await fetch(`${harness.baseUrl}/api/jobs/${failedPredictionJob?.jobId}`);
-    const failedJobPayload = await failedJobResponse.json();
     const stateResponse = await fetch(`${harness.baseUrl}/api/state`);
     const statePayload = (await stateResponse.json()) as StatePayload;
 
@@ -378,11 +535,81 @@ test("service marks failed jobs when the Python worker reports an error", async 
       message: "simulated predict-model failure",
     });
     assert.equal(jobsResponse.status, 200);
-    assert.equal(failedJobResponse.status, 200);
-    assert.equal(failedJobPayload.status, "failed");
-    assert.equal(failedJobPayload.errorCode, "internal_error");
-    assert.equal(failedJobPayload.errorMessage, "simulated predict-model failure");
-    assert.equal(statePayload.summary.failedJobCount, 1);
+    assert.equal(jobsPayload.length, 1);
+    assert.equal(statePayload.summary.failedJobCount, 0);
+  } finally {
+    await harness.close();
+  }
+});
+
+test("service keeps model metadata across restart", async () => {
+  const harness = await createHarness();
+
+  try {
+    await createReadyModel(harness, "restart-model", { horizon: "1h", version: 1 });
+
+    const restartedStorageService = new StorageService(join(harness.tempRoot, "storage", "runtime.sqlite"), join(harness.tempRoot, "storage"));
+    const restartedModelService = ModelService.create(restartedStorageService);
+    restartedStorageService.initialize();
+
+    const restartedModel = restartedModelService.getModel("restart-model");
+
+    assert.ok(restartedModel);
+    assert.deepEqual(restartedModel?.metadata, { horizon: "1h", version: 1 });
+
+    restartedStorageService.close();
+  } finally {
+    await harness.close();
+  }
+});
+
+test("service rejects invalid sample weight shapes", async () => {
+  const harness = await createHarness();
+
+  try {
+    await createReadyModel(harness, "invalid-shape-model");
+
+    const invalidSingleOutputResponse = await fetch(`${harness.baseUrl}/api/models/invalid-shape-model/training-jobs`, {
+      body: JSON.stringify({
+        trainingInput: {
+          inputs: [[1], [2]],
+          sampleWeights: [1],
+          targets: [[0], [1]],
+        },
+      }),
+      headers: { "content-type": "application/json" },
+      method: "POST",
+    });
+    const invalidSingleOutputPayload = await invalidSingleOutputResponse.json();
+    const invalidMultiOutputResponse = await fetch(`${harness.baseUrl}/api/models/invalid-shape-model/training-jobs`, {
+      body: JSON.stringify({
+        trainingInput: {
+          inputs: [[1], [2]],
+          sampleWeights: [1, 1],
+          targets: {
+            classification: [
+              [1, 0],
+              [0, 1],
+            ],
+            regression: [[0.1], [0.2]],
+          },
+        },
+      }),
+      headers: { "content-type": "application/json" },
+      method: "POST",
+    });
+    const invalidMultiOutputPayload = await invalidMultiOutputResponse.json();
+
+    assert.equal(invalidSingleOutputResponse.status, 400);
+    assert.deepEqual(invalidSingleOutputPayload, {
+      code: "invalid_request",
+      message: "trainingInput.sampleWeights length must match target batch size",
+    });
+    assert.equal(invalidMultiOutputResponse.status, 400);
+    assert.deepEqual(invalidMultiOutputPayload, {
+      code: "invalid_request",
+      message: "trainingInput.sampleWeights must match the target shape",
+    });
   } finally {
     await harness.close();
   }

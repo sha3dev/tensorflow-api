@@ -9,4 +9,7 @@ export type {
   JobResultPayload,
   KerasModelDefinition,
   ModelRecord,
+  PredictionResultPayload,
+  TrainingJobResultPayload,
+  TrainingSampleWeight,
 } from "./http/index.ts";

@@ -1,5 +1,5 @@
 export type PythonJobCommand = {
-  action: "create-model" | "predict-model" | "train-model";
+  action: "create-model" | "train-model";
   requestPath: string;
   resultPath: string;
 };
