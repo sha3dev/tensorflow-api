@@ -173,6 +173,9 @@ test("service exposes root metadata, dashboard shell, dashboard asset, and empty
     assert.match(assetSource, /delete-model/);
     assert.match(assetSource, /Expand for full traceback/);
     assert.match(assetSource, /error-details/);
+    assert.match(assetSource, /renderDateCell/);
+    assert.match(assetSource, /renderIdentifierCell/);
+    assert.match(assetSource, /break-anywhere/);
     assert.equal(stateResponse.status, 200);
     assert.deepEqual(statePayload, {
       models: [],
@@ -425,12 +428,19 @@ test("service keeps prior metadata when training fails", async () => {
     const modelPayload = await modelResponse.json();
     const failedJobResponse = await fetch(`${harness.baseUrl}/api/jobs/${trainingPayload.jobId}`);
     const failedJobPayload = await failedJobResponse.json();
+    const failedJobResultResponse = await fetch(`${harness.baseUrl}/api/jobs/${trainingPayload.jobId}/result`);
+    const failedJobResultPayload = await failedJobResultResponse.json();
 
     assert.equal(trainingResponse.status, 202);
     assert.equal(modelResponse.status, 200);
     assert.deepEqual(modelPayload.metadata, { version: 1 });
     assert.equal(failedJobResponse.status, 200);
     assert.equal(failedJobPayload.status, "failed");
+    assert.equal(failedJobResultResponse.status, 409);
+    assert.deepEqual(failedJobResultPayload, {
+      code: "internal_error",
+      message: "simulated train-model failure",
+    });
   } finally {
     await harness.close();
   }

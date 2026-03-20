@@ -404,6 +404,22 @@ export class HttpServerService {
         color: var(--muted);
         font-size: 0.78rem;
       }
+      .cell-stack {
+        display: grid;
+        gap: 3px;
+        min-width: 0;
+      }
+      .cell-primary {
+        min-width: 0;
+      }
+      .cell-note {
+        color: var(--muted);
+        font-size: 0.74rem;
+      }
+      .break-anywhere {
+        overflow-wrap: anywhere;
+        word-break: break-word;
+      }
       .mono {
         font-family: "SFMono-Regular", "Menlo", monospace;
         font-size: 0.76rem;
@@ -440,7 +456,7 @@ export class HttpServerService {
       }
       .table-jobs th:nth-child(1),
       .table-jobs td:nth-child(1) {
-        width: 17%;
+        width: 16%;
       }
       .table-jobs th:nth-child(2),
       .table-jobs td:nth-child(2) {
@@ -448,7 +464,7 @@ export class HttpServerService {
       }
       .table-jobs th:nth-child(3),
       .table-jobs td:nth-child(3) {
-        width: 15%;
+        width: 16%;
       }
       .table-jobs th:nth-child(4),
       .table-jobs td:nth-child(4) {
@@ -460,11 +476,11 @@ export class HttpServerService {
       .table-jobs td:nth-child(6),
       .table-jobs th:nth-child(7),
       .table-jobs td:nth-child(7) {
-        width: 10%;
+        width: 9%;
       }
       .table-jobs th:nth-child(8),
       .table-jobs td:nth-child(8) {
-        width: 30%;
+        width: 32%;
       }
       .error-details {
         width: 100%;
@@ -628,6 +644,31 @@ const formatDate = (value) => {
   return dateTimeFormatter.format(timestamp);
 };
 
+const renderDateCell = (value) => {
+  if (!value) {
+    return "<span class='muted'>No activity yet</span>";
+  }
+
+  const timestamp = new Date(value);
+
+  if (Number.isNaN(timestamp.getTime())) {
+    return "<span class='break-anywhere'>" + escapeHtml(value) + "</span>";
+  }
+
+  return "<span class='cell-stack'><span class='cell-primary'>" + escapeHtml(timestamp.toLocaleDateString(undefined, { dateStyle: "medium" })) + "</span><span class='cell-note'>" + escapeHtml(timestamp.toLocaleTimeString(undefined, { timeStyle: "short" })) + "</span></span>";
+};
+
+const renderIdentifierCell = (primaryText, href, secondaryText) => {
+  const linkMarkup = href
+    ? "<a class='job-link mono break-anywhere' href='" + href + "' target='_blank' rel='noreferrer'>" + escapeHtml(primaryText) + "</a>"
+    : "<span class='mono break-anywhere'>" + escapeHtml(primaryText) + "</span>";
+  const secondaryMarkup = secondaryText
+    ? "<span class='cell-note mono break-anywhere'>" + escapeHtml(secondaryText) + "</span>"
+    : "";
+
+  return "<span class='cell-stack'><span class='cell-primary'>" + linkMarkup + "</span>" + secondaryMarkup + "</span>";
+};
+
 const escapeHtml = (value) => {
   return String(value)
     .replaceAll("&", "&amp;")
@@ -683,11 +724,11 @@ const renderModels = (models) => {
   modelsElement.innerHTML = models.map((model) => {
     const isDeleting = deletingModelId === model.modelId;
     return "<tr>" +
-      "<td><a class='model-link' href='/api/models/" + encodeURIComponent(model.modelId) + "' target='_blank' rel='noreferrer'>" + escapeHtml(model.modelId) + "</a><span class='secondary mono'>" + escapeHtml(model.definitionPath) + "</span></td>" +
+      "<td><span class='cell-stack'><a class='model-link break-anywhere' href='/api/models/" + encodeURIComponent(model.modelId) + "' target='_blank' rel='noreferrer'>" + escapeHtml(model.modelId) + "</a><span class='cell-note mono break-anywhere'>" + escapeHtml(model.definitionPath) + "</span></span></td>" +
       "<td>" + renderStatusPill(model.status) + "</td>" +
-      "<td>" + formatDate(model.createdAt) + "</td>" +
+      "<td>" + renderDateCell(model.createdAt) + "</td>" +
       "<td>" + escapeHtml(model.trainingCount) + "</td>" +
-      "<td>" + formatDate(model.lastTrainingAt) + "</td>" +
+      "<td>" + renderDateCell(model.lastTrainingAt) + "</td>" +
       "<td><button class='button-danger' type='button' data-action='delete-model' data-model-id='" + escapeHtml(model.modelId) + "'" + (isDeleting ? " disabled" : "") + ">" + (isDeleting ? "Deleting..." : "Delete") + "</button></td>" +
       "</tr>";
   }).join("");
@@ -701,13 +742,13 @@ const renderJobs = (jobs) => {
 
   jobsElement.innerHTML = jobs.map((job) => {
     return "<tr>" +
-      "<td><a class='job-link mono' href='/api/jobs/" + encodeURIComponent(job.jobId) + "' target='_blank' rel='noreferrer'>" + escapeHtml(job.jobId) + "</a></td>" +
+      "<td>" + renderIdentifierCell(job.jobId, "/api/jobs/" + encodeURIComponent(job.jobId), null) + "</td>" +
       "<td>" + escapeHtml(job.jobType.replaceAll("_", " ")) + "</td>" +
-      "<td>" + escapeHtml(job.modelId) + "</td>" +
+      "<td>" + renderIdentifierCell(job.modelId, "/api/models/" + encodeURIComponent(job.modelId), null) + "</td>" +
       "<td>" + renderStatusPill(job.status) + "</td>" +
-      "<td>" + formatDate(job.createdAt) + "</td>" +
-      "<td>" + formatDate(job.startedAt) + "</td>" +
-      "<td>" + formatDate(job.finishedAt) + "</td>" +
+      "<td>" + renderDateCell(job.createdAt) + "</td>" +
+      "<td>" + renderDateCell(job.startedAt) + "</td>" +
+      "<td>" + renderDateCell(job.finishedAt) + "</td>" +
       "<td>" + renderErrorCell(job.errorMessage) + "</td>" +
       "</tr>";
   }).join("");
@@ -1073,7 +1114,15 @@ setInterval(() => {
       response = this.createJsonResponse(context, this.buildJsonError("not_found", jobResult.message), 404);
     } else {
       if (jobResult.kind === "not_ready") {
-        response = this.createJsonResponse(context, this.buildJsonError("conflict", `job '${jobId}' is not finished yet`), 409);
+        if (jobResult.job.status === "failed") {
+          response = this.createJsonResponse(
+            context,
+            this.buildJsonError(jobResult.job.errorCode || "internal_error", jobResult.job.errorMessage || `job '${jobId}' failed without an error message`),
+            409,
+          );
+        } else {
+          response = this.createJsonResponse(context, this.buildJsonError("conflict", `job '${jobId}' is not finished yet`), 409);
+        }
       } else {
         response = this.createJsonResponse(context, jobResult.result, 200);
       }

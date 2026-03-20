@@ -539,7 +539,7 @@ Status:
 
 ### `GET /api/jobs/:jobId/result`
 
-Returns the JSON job result for successful jobs. Successful training jobs include `modelId`, `status: "succeeded"`, `trainedAt`, and optional `history`.
+Returns the JSON job result for successful jobs. Successful training jobs include `modelId`, `status: "succeeded"`, `trainedAt`, and optional `history`. Failed jobs return `409` with the stored `errorCode` and full `errorMessage`, including Python traceback text when available.
 
 Status:
 
