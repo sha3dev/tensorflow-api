@@ -133,7 +133,7 @@ class FakeModel:
             }
         )
 
-    def predict(self, inputs):
+    def predict(self, inputs, verbose=1):
         if len(self.output_names) > 1:
             return [
                 FakeArray([output_name, inputs.get("value")])
@@ -298,6 +298,82 @@ class ModelsApi:
         saved_model = json.loads(Path(artifact_path).read_text(encoding="utf-8"))
         model = FakeModel(saved_model["model_kind"], saved_model["config"])
         model.compile_config = saved_model.get("compile_config", {})
+        model.output_names = saved_model.get("output_names", ["output"])
+        return model
+
+
+class KerasApi:
+    Sequential = Sequential
+    Model = Model
+    models = ModelsApi()
+
+
+keras = KerasApi()
+`;
+  writeFileSync(join(moduleRootPath, "tensorflow.py"), moduleSource, "utf8");
+}
+
+function createNoisyPredictionTensorflowModule(moduleRootPath: string): void {
+  const moduleSource = `__version__ = "fake-tf-1.0.0"
+
+import json
+import sys
+from pathlib import Path
+
+
+class FakeArray:
+    def __init__(self, value):
+        self.value = value
+
+    def tolist(self):
+        return self.value
+
+
+def convert_to_tensor(value):
+    return {"converted": True, "value": value}
+
+
+class FakeModel:
+    def __init__(self, model_kind, config):
+        self.model_kind = model_kind
+        self.config = config
+        self.output_names = config.get("output_names", ["output"])
+
+    def save(self, artifact_path):
+        Path(artifact_path).write_text(
+            json.dumps(
+                {
+                    "config": self.config,
+                    "model_kind": self.model_kind,
+                    "output_names": self.output_names,
+                }
+            ),
+            encoding="utf-8",
+        )
+
+    def predict(self, inputs, verbose=1):
+        sys.stdout.write("\\u001b[1m1/1\\u001b[0m fake-progress\\n")
+        sys.stdout.flush()
+        return FakeArray([inputs.get("converted"), inputs.get("value"), verbose])
+
+
+class Sequential:
+    @staticmethod
+    def from_config(config):
+        return FakeModel("sequential", config)
+
+
+class Model:
+    @staticmethod
+    def from_config(config):
+        return FakeModel("functional", config)
+
+
+class ModelsApi:
+    @staticmethod
+    def load_model(artifact_path):
+        saved_model = json.loads(Path(artifact_path).read_text(encoding="utf-8"))
+        model = FakeModel(saved_model["model_kind"], saved_model["config"])
         model.output_names = saved_model.get("output_names", ["output"])
         return model
 
@@ -606,6 +682,31 @@ test("python worker maps multi-output predictions by output name", async () => {
       classification: ["classification", [[5, 6]]],
       regression: ["regression", [[5, 6]]],
     });
+  } finally {
+    rmSync(tempRoot, { force: true, recursive: true });
+  }
+});
+
+test("python worker prediction stdio stays valid JSON when predict writes ANSI progress", async () => {
+  const tempRoot = mkdtempSync(join(tmpdir(), "tensorflow-worker-test-"));
+  const artifactPath = join(tempRoot, "artifact.keras");
+
+  try {
+    createNoisyPredictionTensorflowModule(tempRoot);
+    writeFileSync(artifactPath, JSON.stringify({ config: { layers: [] }, model_kind: "sequential" }), "utf8");
+    const resultPayload = (await executePredictionOverStdio(tempRoot, {
+      artifactPath,
+      modelId: "worker-model",
+      predictionInput: {
+        inputs: [[5, 6]],
+      },
+    })) as {
+      outputs: unknown[];
+      status: string;
+    };
+
+    assert.equal(resultPayload.status, "predicted");
+    assert.deepEqual(resultPayload.outputs, [true, [[5, 6]], 0]);
   } finally {
     rmSync(tempRoot, { force: true, recursive: true });
   }

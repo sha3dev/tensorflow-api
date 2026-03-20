@@ -1,5 +1,7 @@
 #!/usr/bin/env python3
 
+import contextlib
+import io
 import json
 import sys
 import traceback
@@ -354,7 +356,12 @@ def predict_model_to_stdout(payload: dict) -> None:
     artifact_path = payload["artifactPath"]
     prediction_input = payload["predictionInput"]
     model = tf.keras.models.load_model(artifact_path)
-    prediction_output = model.predict(to_tensor_structure(tf, prediction_input["inputs"]))
+
+    with contextlib.redirect_stdout(io.StringIO()):
+        prediction_output = model.predict(
+            to_tensor_structure(tf, prediction_input["inputs"]), verbose=0
+        )
+
     write_stdout(
         {
             "modelId": payload["modelId"],
