@@ -64,6 +64,7 @@ What `npm run start` does on first run:
 - installs a managed Python interpreter if needed
 - syncs TensorFlow dependencies from `requirements/python-runtime.txt`
 - verifies that the selected Python can import TensorFlow before starting Node
+- recreates `.venv/` and retries once if the Python environment is present but broken
 - starts the Node service with `PYTHON_BIN` pointing at `.venv`
 
 Default URLs:

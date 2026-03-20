@@ -1,5 +1,5 @@
 import { spawn } from "node:child_process";
-import { existsSync } from "node:fs";
+import { existsSync, rmSync } from "node:fs";
 import { homedir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -10,6 +10,7 @@ const VENV_DIR = path.join(ROOT_DIR, ".venv");
 const REQUIREMENTS_PATH = path.join(ROOT_DIR, "requirements", "python-runtime.txt");
 const DEFAULT_PYTHON_VERSION = process.env.TENSORFLOW_API_PYTHON_VERSION || "3.11";
 const UV_INSTALL_DIR = process.env.TENSORFLOW_API_UV_INSTALL_DIR || path.join(homedir(), ".cache", "tensorflow-api", "uv");
+const PYTHON_BUILD_TOOLS = ["pip", "setuptools", "wheel"];
 const TENSORFLOW_IMPORT_CHECK = "import tensorflow as tf; print(tf.__version__)";
 
 function getUvExecutablePath() {
@@ -97,14 +98,30 @@ async function ensureUv() {
 }
 
 async function bootstrapPythonRuntime(uvPath) {
-  const pythonPath = getVenvPythonPath();
+  let pythonPath = getVenvPythonPath();
+  let hasRetriedBootstrap = false;
 
-  if (!existsSync(pythonPath)) {
-    await runCommand(uvPath, ["venv", VENV_DIR, "--python", DEFAULT_PYTHON_VERSION]);
+  while (true) {
+    if (!existsSync(pythonPath)) {
+      await runCommand(uvPath, ["venv", VENV_DIR, "--python", DEFAULT_PYTHON_VERSION]);
+    }
+
+    try {
+      await runCommand(uvPath, ["pip", "install", "--python", pythonPath, "--upgrade", ...PYTHON_BUILD_TOOLS]);
+      await runCommand(uvPath, ["pip", "install", "--python", pythonPath, "-r", REQUIREMENTS_PATH]);
+      await runCommand(pythonPath, ["-c", TENSORFLOW_IMPORT_CHECK]);
+      break;
+    } catch (bootstrapError) {
+      if (hasRetriedBootstrap) {
+        throw bootstrapError;
+      }
+
+      console.warn("Python runtime bootstrap failed. Recreating .venv and retrying once.");
+      rmSync(VENV_DIR, { force: true, recursive: true });
+      pythonPath = getVenvPythonPath();
+      hasRetriedBootstrap = true;
+    }
   }
-
-  await runCommand(uvPath, ["pip", "install", "--python", pythonPath, "-r", REQUIREMENTS_PATH]);
-  await runCommand(pythonPath, ["-c", TENSORFLOW_IMPORT_CHECK]);
 
   return pythonPath;
 }
