@@ -6,6 +6,8 @@ import { join } from "node:path";
 import { test } from "node:test";
 import { promisify } from "node:util";
 
+import { PythonRuntimeService } from "../src/python-runtime/index.ts";
+
 const EXEC_FILE_ASYNC = promisify(execFile);
 
 async function executePredictionOverStdio(tempRoot: string, payload: Record<string, unknown>): Promise<Record<string, unknown>> {
@@ -41,7 +43,9 @@ async function executePredictionOverStdio(tempRoot: string, payload: Record<stri
 }
 
 function createFakeTensorflowModule(moduleRootPath: string): void {
-  const moduleSource = `import json
+  const moduleSource = `__version__ = "fake-tf-1.0.0"
+
+import json
 from pathlib import Path
 
 class FakeArray:
@@ -365,4 +369,28 @@ test("python worker maps multi-output predictions by output name", async () => {
   } finally {
     rmSync(tempRoot, { force: true, recursive: true });
   }
+});
+
+test("python runtime verification succeeds when tensorflow is importable", () => {
+  const tempRoot = mkdtempSync(join(tmpdir(), "tensorflow-worker-test-"));
+  const previousPythonPath = process.env.PYTHONPATH;
+
+  try {
+    createFakeTensorflowModule(tempRoot);
+    process.env.PYTHONPATH = tempRoot;
+    const pythonRuntimeService = new PythonRuntimeService("python3", "python/tensorflow_api_worker.py");
+
+    pythonRuntimeService.verifyRuntime();
+  } finally {
+    process.env.PYTHONPATH = previousPythonPath;
+    rmSync(tempRoot, { force: true, recursive: true });
+  }
+});
+
+test("python runtime verification reports the configured python binary on failure", () => {
+  const pythonRuntimeService = new PythonRuntimeService("python-does-not-exist", "python/tensorflow_api_worker.py");
+
+  assert.throws(() => {
+    pythonRuntimeService.verifyRuntime();
+  }, /python runtime check failed.*python-does-not-exist/);
 });

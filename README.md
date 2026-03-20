@@ -67,6 +67,8 @@ What `npm run start` does on first run:
 - recreates `.venv/` and retries once if the Python environment is present but broken
 - starts the Node service with `PYTHON_BIN` pointing at `.venv`
 
+If you start the service without `npm run start`, the runtime still prefers the local `.venv` Python automatically when that environment already exists.
+
 Default URLs:
 
 - service root: `http://localhost:3000/`
@@ -814,7 +816,7 @@ Configuration lives in [`src/config.ts`](/Users/jc/Documents/GitHub/tensorflow-a
 - `config.SERVICE_NAME`: service name returned by `GET /`.
 - `config.STORAGE_ROOT`: root directory where model and job files are written.
 - `config.SQLITE_PATH`: SQLite database path for persisted metadata.
-- `config.PYTHON_BIN`: Python executable used to run the TensorFlow worker script.
+- `config.PYTHON_BIN`: Python executable used to run the TensorFlow worker script. Defaults to `.venv/bin/python` when present, otherwise `python3`.
 - `config.PYTHON_WORKER_SCRIPT`: path to the Python worker entrypoint.
 - `config.JOB_POLL_INTERVAL_MS`: interval used by the background Node polling loop.
 

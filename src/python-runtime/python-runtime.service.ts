@@ -2,7 +2,7 @@
  * @section imports:externals
  */
 
-import { spawn } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 
 /**
  * @section imports:internals
@@ -46,6 +46,12 @@ export class PythonRuntimeService {
     this.executor = executor || this.executeThroughPython.bind(this);
     this.predictionExecutor = predictionExecutor || this.executePredictionThroughPython.bind(this);
   }
+
+  /**
+   * @section static:properties
+   */
+
+  private static readonly TENSORFLOW_IMPORT_CHECK = "import tensorflow as tf; print(tf.__version__)";
 
   /**
    * @section factory
@@ -133,9 +139,28 @@ export class PythonRuntimeService {
     return result;
   }
 
+  private buildRuntimeCheckErrorMessage(errorText: string): string {
+    const normalizedErrorText = errorText.trim();
+    const message = normalizedErrorText || `tensorflow is not available in python runtime '${this.pythonBin}'`;
+    return message;
+  }
+
   /**
    * @section public:methods
    */
+
+  public verifyRuntime(): void {
+    const commandResult = spawnSync(this.pythonBin, ["-c", PythonRuntimeService.TENSORFLOW_IMPORT_CHECK], {
+      encoding: "utf8",
+    });
+    const standardError = typeof commandResult.stderr === "string" ? commandResult.stderr : "";
+    const processError = commandResult.error ? commandResult.error.message : "";
+    const errorText = `${standardError}\n${processError}`.trim();
+
+    if (commandResult.status !== 0 || commandResult.error) {
+      throw new Error(`python runtime check failed for '${this.pythonBin}': ${this.buildRuntimeCheckErrorMessage(errorText)}`);
+    }
+  }
 
   public async execute(command: PythonJobCommand): Promise<PythonExecutionResult> {
     const result = await this.executor(command);

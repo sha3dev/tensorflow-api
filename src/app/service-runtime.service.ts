@@ -29,6 +29,8 @@ export class ServiceRuntime {
 
   private readonly jobService: JobService;
 
+  private readonly pythonRuntimeService: PythonRuntimeService;
+
   private intervalReference: NodeJS.Timeout | null;
 
   private readonly storageService: StorageService;
@@ -37,10 +39,17 @@ export class ServiceRuntime {
    * @section constructor
    */
 
-  public constructor(storageService: StorageService, jobService: JobService, httpServerService: HttpServerService, jobPollIntervalMs: number) {
+  public constructor(
+    storageService: StorageService,
+    jobService: JobService,
+    httpServerService: HttpServerService,
+    pythonRuntimeService: PythonRuntimeService,
+    jobPollIntervalMs: number,
+  ) {
     this.storageService = storageService;
     this.jobService = jobService;
     this.httpServerService = httpServerService;
+    this.pythonRuntimeService = pythonRuntimeService;
     this.jobPollIntervalMs = jobPollIntervalMs;
     this.intervalReference = null;
   }
@@ -59,7 +68,7 @@ export class ServiceRuntime {
     const httpServerService = HttpServerService.create(appInfoService, modelService, jobService, dashboardStateService);
     storageService.initialize();
     jobService.recoverInterruptedJobs();
-    return new ServiceRuntime(storageService, jobService, httpServerService, config.JOB_POLL_INTERVAL_MS);
+    return new ServiceRuntime(storageService, jobService, httpServerService, pythonRuntimeService, config.JOB_POLL_INTERVAL_MS);
   }
 
   /**
@@ -84,6 +93,7 @@ export class ServiceRuntime {
   }
 
   public startServer(): ServerType {
+    this.pythonRuntimeService.verifyRuntime();
     const server = this.buildServer();
     this.startJobLoop();
     server.listen(config.DEFAULT_PORT, () => {
