@@ -517,7 +517,7 @@ Status:
 
 ### `GET /api/jobs`
 
-Returns jobs ordered from newest to oldest.
+Returns jobs ordered from newest to oldest. Failed training jobs include structured `diagnostics` when available.
 
 Query params:
 
@@ -530,7 +530,7 @@ Status:
 
 ### `GET /api/jobs/:jobId`
 
-Returns one job record.
+Returns one job record. Failed training jobs include structured `diagnostics` when available.
 
 Status:
 

@@ -208,6 +208,12 @@ export class JobService {
     this.storageService.writeJsonFile(jobRecord.resultPath, failedJobResult);
   }
 
+  private enrichFailedTrainingJob(jobRecord: JobRecord): JobRecord {
+    const diagnostics = this.readJobFailureDiagnostics(jobRecord);
+    const enrichedJobRecord = diagnostics ? { ...jobRecord, diagnostics } : jobRecord;
+    return enrichedJobRecord;
+  }
+
   /**
    * @section public:methods
    */
@@ -291,7 +297,11 @@ export class JobService {
   }
 
   public listJobs(filter?: JobListFilter): JobRecord[] {
-    const jobRecords = this.storageService.listJobRecords(filter);
+    const storedJobRecords = this.storageService.listJobRecords(filter);
+    const jobRecords = storedJobRecords.map((jobRecord) => {
+      const mappedJobRecord = jobRecord.status === "failed" && jobRecord.jobType === "train_model" ? this.enrichFailedTrainingJob(jobRecord) : jobRecord;
+      return mappedJobRecord;
+    });
     return jobRecords;
   }
 
@@ -300,8 +310,7 @@ export class JobService {
     let jobRecord: JobRecord | null;
 
     if (storedJobRecord?.status === "failed" && storedJobRecord.jobType === "train_model") {
-      const diagnostics = this.readJobFailureDiagnostics(storedJobRecord);
-      jobRecord = diagnostics ? { ...storedJobRecord, diagnostics } : storedJobRecord;
+      jobRecord = this.enrichFailedTrainingJob(storedJobRecord);
     } else {
       jobRecord = storedJobRecord;
     }

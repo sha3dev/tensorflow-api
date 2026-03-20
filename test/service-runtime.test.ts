@@ -485,6 +485,8 @@ test("service keeps prior metadata when training fails", async () => {
     const modelPayload = await modelResponse.json();
     const failedJobResponse = await fetch(`${harness.baseUrl}/api/jobs/${trainingPayload.jobId}`);
     const failedJobPayload = await failedJobResponse.json();
+    const failedJobsResponse = await fetch(`${harness.baseUrl}/api/jobs?modelId=failed-training-model`);
+    const failedJobsPayload = await failedJobsResponse.json();
     const failedJobResultResponse = await fetch(`${harness.baseUrl}/api/jobs/${trainingPayload.jobId}/result`);
     const failedJobResultPayload = await failedJobResultResponse.json();
 
@@ -492,6 +494,7 @@ test("service keeps prior metadata when training fails", async () => {
     assert.equal(modelResponse.status, 200);
     assert.deepEqual(modelPayload.metadata, { version: 1 });
     assert.equal(failedJobResponse.status, 200);
+    assert.equal(failedJobsResponse.status, 200);
     assert.equal(failedJobPayload.status, "failed");
     assert.deepEqual(failedJobPayload.diagnostics.modelOutputNames, ["regression", "classification"]);
     assert.equal(failedJobPayload.diagnostics.modelOutputCount, 2);
@@ -500,6 +503,9 @@ test("service keeps prior metadata when training fails", async () => {
     assert.match(failedJobPayload.diagnostics.traceback, /KeyError: 0/);
     assert.equal(failedJobPayload.diagnostics.stderrTail, "simulated train-model failure");
     assert.equal(JSON.stringify(failedJobPayload.diagnostics).includes("[[1,0]]"), false);
+    assert.equal(failedJobsPayload[0].status, "failed");
+    assert.deepEqual(failedJobsPayload[0].diagnostics.modelOutputNames, ["regression", "classification"]);
+    assert.match(failedJobsPayload[0].diagnostics.traceback, /KeyError: 0/);
     assert.equal(failedJobResultResponse.status, 409);
     assert.deepEqual(failedJobResultPayload, {
       code: "internal_error",
