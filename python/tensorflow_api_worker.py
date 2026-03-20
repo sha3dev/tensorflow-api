@@ -66,6 +66,21 @@ def normalize_fit_config(raw_fit_config: dict) -> dict:
     return normalized_fit_config
 
 
+def normalize_compile_config(model, raw_compile_config: dict) -> dict:
+    normalized_compile_config = dict(raw_compile_config)
+    output_names = list(getattr(model, "output_names", []) or [])
+    metrics = normalized_compile_config.get("metrics")
+
+    if (
+        isinstance(metrics, list)
+        and len(metrics) == 0
+        and len(output_names) > 1
+    ):
+        normalized_compile_config.pop("metrics")
+
+    return normalized_compile_config
+
+
 def to_tensor(tf_module, value):
     tensor_value = tf_module.convert_to_tensor(value)
     return tensor_value
@@ -271,6 +286,8 @@ def create_model(payload: dict, result_path: str) -> None:
         model = tf.keras.Model.from_config(model_config)
     else:
         raise ValueError(f"unsupported model format: {model_format}")
+
+    compile_config = normalize_compile_config(model, compile_config)
 
     if compile_config:
         model.compile(**compile_config)

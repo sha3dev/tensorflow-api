@@ -240,6 +240,79 @@ keras = KerasApi()
   writeFileSync(join(moduleRootPath, "tensorflow.py"), moduleSource, "utf8");
 }
 
+function createCompileAwareTensorflowModule(moduleRootPath: string): void {
+  const moduleSource = `__version__ = "fake-tf-1.0.0"
+
+import json
+from pathlib import Path
+
+
+def convert_to_tensor(value):
+    return {"converted": True, "value": value}
+
+
+class FakeModel:
+    def __init__(self, model_kind, config):
+        self.model_kind = model_kind
+        self.config = config
+        self.compile_config = {}
+        self.output_names = config.get("output_names", ["output"])
+
+    def compile(self, **kwargs):
+        metrics = kwargs.get("metrics")
+
+        if len(self.output_names) > 1 and isinstance(metrics, list) and len(metrics) == 0:
+            raise ValueError("For a model with multiple outputs, when providing the metrics argument as a list, it should have as many entries as the model has outputs")
+
+        self.compile_config = kwargs
+
+    def save(self, artifact_path):
+        Path(artifact_path).write_text(
+            json.dumps(
+                {
+                    "compile_config": self.compile_config,
+                    "config": self.config,
+                    "model_kind": self.model_kind,
+                    "output_names": self.output_names,
+                }
+            ),
+            encoding="utf-8",
+        )
+
+
+class Sequential:
+    @staticmethod
+    def from_config(config):
+        return FakeModel("sequential", config)
+
+
+class Model:
+    @staticmethod
+    def from_config(config):
+        return FakeModel("functional", config)
+
+
+class ModelsApi:
+    @staticmethod
+    def load_model(artifact_path):
+        saved_model = json.loads(Path(artifact_path).read_text(encoding="utf-8"))
+        model = FakeModel(saved_model["model_kind"], saved_model["config"])
+        model.compile_config = saved_model.get("compile_config", {})
+        model.output_names = saved_model.get("output_names", ["output"])
+        return model
+
+
+class KerasApi:
+    Sequential = Sequential
+    Model = Model
+    models = ModelsApi()
+
+
+keras = KerasApi()
+`;
+  writeFileSync(join(moduleRootPath, "tensorflow.py"), moduleSource, "utf8");
+}
+
 test("python worker normalizes fit config keys and converts training arrays", async () => {
   const tempRoot = mkdtempSync(join(tmpdir(), "tensorflow-worker-test-"));
   const requestPath = join(tempRoot, "train-request.json");
@@ -282,6 +355,57 @@ test("python worker normalizes fit config keys and converts training arrays", as
     assert.deepEqual(resultPayload.history.input_is_converted, [true]);
     assert.deepEqual(resultPayload.history.sample_weight, [null]);
     assert.deepEqual(resultPayload.history.target_is_converted, [true]);
+  } finally {
+    rmSync(tempRoot, { force: true, recursive: true });
+  }
+});
+
+test("python worker omits empty metrics list for multi-output model creation", async () => {
+  const tempRoot = mkdtempSync(join(tmpdir(), "tensorflow-worker-test-"));
+  const requestPath = join(tempRoot, "create-request.json");
+  const resultPath = join(tempRoot, "create-result.json");
+  const artifactPath = join(tempRoot, "artifact.keras");
+
+  try {
+    createCompileAwareTensorflowModule(tempRoot);
+    writeFileSync(
+      requestPath,
+      JSON.stringify({
+        artifactPath,
+        definition: {
+          compileConfig: {
+            loss: {
+              classification: "categorical_crossentropy",
+              regression: "mse",
+            },
+            metrics: [],
+            optimizer: "adam",
+          },
+          format: "keras-functional",
+          modelConfig: {
+            layers: [],
+            output_names: ["regression", "classification"],
+          },
+        },
+        modelId: "worker-model",
+      }),
+      "utf8",
+    );
+
+    await EXEC_FILE_ASYNC("python3", ["python/tensorflow_api_worker.py", "create-model", requestPath, resultPath], {
+      cwd: "/Users/jc/Documents/GitHub/tensorflow-api",
+      env: { ...process.env, PYTHONPATH: tempRoot },
+    });
+
+    const resultPayload = JSON.parse(readFileSync(resultPath, "utf8")) as {
+      status: string;
+    };
+    const artifactPayload = JSON.parse(readFileSync(artifactPath, "utf8")) as {
+      compile_config: Record<string, unknown>;
+    };
+
+    assert.equal(resultPayload.status, "ready");
+    assert.equal("metrics" in artifactPayload.compile_config, false);
   } finally {
     rmSync(tempRoot, { force: true, recursive: true });
   }
