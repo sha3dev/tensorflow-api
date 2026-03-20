@@ -1113,18 +1113,26 @@ setInterval(() => {
     if (jobResult.kind === "not_found") {
       response = this.createJsonResponse(context, this.buildJsonError("not_found", jobResult.message), 404);
     } else {
-      if (jobResult.kind === "not_ready") {
-        if (jobResult.job.status === "failed") {
-          response = this.createJsonResponse(
-            context,
-            this.buildJsonError(jobResult.job.errorCode || "internal_error", jobResult.job.errorMessage || `job '${jobId}' failed without an error message`),
-            409,
-          );
-        } else {
-          response = this.createJsonResponse(context, this.buildJsonError("conflict", `job '${jobId}' is not finished yet`), 409);
-        }
+      if (jobResult.kind === "failed") {
+        response = this.createJsonResponse(
+          context,
+          {
+            code: jobResult.result.errorCode,
+            diagnostics: jobResult.result.diagnostics,
+            errorCode: jobResult.result.errorCode,
+            errorMessage: jobResult.result.errorMessage,
+            message: jobResult.result.errorMessage,
+            modelId: jobResult.result.modelId,
+            status: jobResult.result.status,
+          },
+          409,
+        );
       } else {
-        response = this.createJsonResponse(context, jobResult.result, 200);
+        if (jobResult.kind === "not_ready") {
+          response = this.createJsonResponse(context, this.buildJsonError("conflict", `job '${jobId}' is not finished yet`), 409);
+        } else {
+          response = this.createJsonResponse(context, jobResult.result, 200);
+        }
       }
     }
 

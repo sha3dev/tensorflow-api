@@ -24,6 +24,7 @@ type TestHarness = {
 
 type FakeExecutorOptions = {
   failingAction?: PythonJobCommand["action"] | "predict-model";
+  failureResultPayload?: Record<string, unknown>;
   predictionResult?: Record<string, unknown>;
   tempRoot?: string;
 };
@@ -45,6 +46,9 @@ function createFakeExecutor(options?: FakeExecutorOptions): PythonJobExecutor {
     const payload = JSON.parse(readFileSync(command.requestPath, "utf8")) as Record<string, unknown>;
 
     if (options?.failingAction === command.action) {
+      if (options.failureResultPayload) {
+        writeFileSync(command.resultPath, JSON.stringify(options.failureResultPayload), "utf8");
+      }
       return { errorMessage: `simulated ${command.action} failure`, isSuccess: false };
     }
 
@@ -404,7 +408,44 @@ test("service rejects deleting a model with active jobs", async () => {
 });
 
 test("service keeps prior metadata when training fails", async () => {
-  const harness = await createHarness({ failingAction: "train-model" });
+  const harness = await createHarness({
+    failingAction: "train-model",
+    failureResultPayload: {
+      diagnostics: {
+        modelOutputCount: 2,
+        modelOutputNames: ["regression", "classification"],
+        pythonExceptionType: "KeyError",
+        stderrTail: "",
+        traceback: "Traceback (most recent call last):\nKeyError: 0",
+        trainingInputSummary: {
+          sampleWeightKeys: ["classification", "regression"],
+          sampleWeightShapes: {
+            classification: [1],
+            regression: [1],
+          },
+          targetKeys: ["classification", "regression"],
+          targetShapes: {
+            classification: [1, 2],
+            regression: [1, 1],
+          },
+          validationSampleWeightKeys: ["classification", "regression"],
+          validationSampleWeightShapes: {
+            classification: [1],
+            regression: [1],
+          },
+          validationTargetKeys: ["classification", "regression"],
+          validationTargetShapes: {
+            classification: [1, 2],
+            regression: [1, 1],
+          },
+        },
+      },
+      errorCode: "internal_error",
+      errorMessage: "Traceback (most recent call last):\nKeyError: 0",
+      modelId: "failed-training-model",
+      status: "failed",
+    },
+  });
 
   try {
     await createReadyModel(harness, "failed-training-model", { version: 1 });
@@ -414,7 +455,23 @@ test("service keeps prior metadata when training fails", async () => {
         modelMetadata: { version: 2 },
         trainingInput: {
           inputs: [[1]],
-          targets: [[1]],
+          sampleWeights: {
+            classification: [1],
+            regression: [1],
+          },
+          targets: {
+            classification: [[1, 0]],
+            regression: [[1]],
+          },
+          validationInputs: [[1]],
+          validationSampleWeights: {
+            classification: [1],
+            regression: [1],
+          },
+          validationTargets: {
+            classification: [[1, 0]],
+            regression: [[1]],
+          },
         },
       }),
       headers: { "content-type": "application/json" },
@@ -436,10 +493,50 @@ test("service keeps prior metadata when training fails", async () => {
     assert.deepEqual(modelPayload.metadata, { version: 1 });
     assert.equal(failedJobResponse.status, 200);
     assert.equal(failedJobPayload.status, "failed");
+    assert.deepEqual(failedJobPayload.diagnostics.modelOutputNames, ["regression", "classification"]);
+    assert.equal(failedJobPayload.diagnostics.modelOutputCount, 2);
+    assert.deepEqual(failedJobPayload.diagnostics.trainingInputSummary.targetKeys, ["classification", "regression"]);
+    assert.deepEqual(failedJobPayload.diagnostics.trainingInputSummary.sampleWeightKeys, ["classification", "regression"]);
+    assert.match(failedJobPayload.diagnostics.traceback, /KeyError: 0/);
+    assert.equal(failedJobPayload.diagnostics.stderrTail, "simulated train-model failure");
+    assert.equal(JSON.stringify(failedJobPayload.diagnostics).includes("[[1,0]]"), false);
     assert.equal(failedJobResultResponse.status, 409);
     assert.deepEqual(failedJobResultPayload, {
       code: "internal_error",
+      diagnostics: {
+        modelOutputCount: 2,
+        modelOutputNames: ["regression", "classification"],
+        pythonExceptionType: "KeyError",
+        stderrTail: "simulated train-model failure",
+        traceback: "Traceback (most recent call last):\nKeyError: 0",
+        trainingInputSummary: {
+          sampleWeightKeys: ["classification", "regression"],
+          sampleWeightShapes: {
+            classification: [1],
+            regression: [1],
+          },
+          targetKeys: ["classification", "regression"],
+          targetShapes: {
+            classification: [1, 2],
+            regression: [1, 1],
+          },
+          validationSampleWeightKeys: ["classification", "regression"],
+          validationSampleWeightShapes: {
+            classification: [1],
+            regression: [1],
+          },
+          validationTargetKeys: ["classification", "regression"],
+          validationTargetShapes: {
+            classification: [1, 2],
+            regression: [1, 1],
+          },
+        },
+      },
+      errorCode: "internal_error",
+      errorMessage: "simulated train-model failure",
       message: "simulated train-model failure",
+      modelId: "failed-training-model",
+      status: "failed",
     });
   } finally {
     await harness.close();

@@ -4,9 +4,13 @@ export type {
   CreateJobResult,
   CreatePredictionJobRequest,
   CreateTrainingJobRequest,
+  FailedJobResultPayload,
+  JobFailureDiagnostics,
   JobRecord,
   JobResultPayload,
   PredictionResultPayload,
+  ShapeSummary,
+  TrainingInputSummary,
   TrainingJobResultPayload,
   TrainingSampleWeight,
 } from "../job/index.ts";

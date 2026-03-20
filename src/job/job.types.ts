@@ -4,6 +4,32 @@ export type JobType = "create_model" | "train_model";
 
 export type TrainingSampleWeight = number[] | Record<string, number[]>;
 
+export type ShapeSummaryRecord = {
+  [key: string]: ShapeSummary;
+};
+
+export type ShapeSummary = ShapeSummaryRecord | number[];
+
+export type TrainingInputSummary = {
+  sampleWeightKeys: string[];
+  sampleWeightShapes: ShapeSummary | null;
+  targetKeys: string[];
+  targetShapes: ShapeSummary | null;
+  validationSampleWeightKeys: string[];
+  validationSampleWeightShapes: ShapeSummary | null;
+  validationTargetKeys: string[];
+  validationTargetShapes: ShapeSummary | null;
+};
+
+export type JobFailureDiagnostics = {
+  modelOutputCount: number;
+  modelOutputNames: string[];
+  pythonExceptionType: string;
+  stderrTail: string;
+  traceback: string;
+  trainingInputSummary: TrainingInputSummary;
+};
+
 export type CreateTrainingJobRequest = {
   fitConfig?: {
     batchSize?: number;
@@ -30,6 +56,7 @@ export type CreatePredictionJobRequest = {
 
 export type JobRecord = {
   createdAt: string;
+  diagnostics?: JobFailureDiagnostics | null;
   errorCode: string | null;
   errorMessage: string | null;
   finishedAt: string | null;
@@ -50,6 +77,14 @@ export type JobListFilter = {
 
 export type JobResultPayload = Record<string, unknown>;
 
+export type FailedJobResultPayload = {
+  diagnostics?: JobFailureDiagnostics;
+  errorCode: string;
+  errorMessage: string;
+  modelId: string;
+  status: "failed";
+};
+
 export type CreateJobResult =
   | {
       job: JobRecord;
@@ -61,6 +96,11 @@ export type CreateJobResult =
     };
 
 export type JobResultLookup =
+  | {
+      job: JobRecord;
+      kind: "failed";
+      result: FailedJobResultPayload;
+    }
   | {
       job: JobRecord;
       kind: "not_ready";

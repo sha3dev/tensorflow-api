@@ -16,6 +16,8 @@ import type {
   CreateJobResult,
   CreatePredictionJobRequest,
   CreateTrainingJobRequest,
+  FailedJobResultPayload,
+  JobFailureDiagnostics,
   JobListFilter,
   JobProcessingOutcome,
   JobRecord,
@@ -158,6 +160,54 @@ export class JobService {
     return resultPayload;
   }
 
+  private buildStderrTail(errorMessage: string): string {
+    const stderrLines = errorMessage
+      .split("\n")
+      .map((line) => {
+        return line.trimEnd();
+      })
+      .filter((line) => {
+        return line.length > 0;
+      });
+    const stderrTail = stderrLines.slice(-40).join("\n");
+    return stderrTail;
+  }
+
+  private readJobFailureDiagnostics(jobRecord: JobRecord): JobFailureDiagnostics | null {
+    const persistedResult = this.readPersistedJobResult(jobRecord);
+    const diagnostics = persistedResult.diagnostics as JobFailureDiagnostics | undefined;
+    const result = diagnostics || null;
+    return result;
+  }
+
+  private buildFailedJobResultPayload(jobRecord: JobRecord, errorMessage: string): FailedJobResultPayload {
+    const persistedResult = this.readPersistedJobResult(jobRecord);
+    const diagnostics = persistedResult.diagnostics as JobFailureDiagnostics | undefined;
+    const resultPayload: FailedJobResultPayload = diagnostics
+      ? {
+          diagnostics: {
+            ...diagnostics,
+            stderrTail: diagnostics.stderrTail || this.buildStderrTail(errorMessage),
+          },
+          errorCode: jobRecord.errorCode || "internal_error",
+          errorMessage,
+          modelId: jobRecord.modelId,
+          status: "failed",
+        }
+      : {
+          errorCode: jobRecord.errorCode || "internal_error",
+          errorMessage,
+          modelId: jobRecord.modelId,
+          status: "failed",
+        };
+    return resultPayload;
+  }
+
+  private writeFailureResult(jobRecord: JobRecord, errorMessage: string): void {
+    const failedJobResult = this.buildFailedJobResultPayload(jobRecord, errorMessage);
+    this.storageService.writeJsonFile(jobRecord.resultPath, failedJobResult);
+  }
+
   /**
    * @section public:methods
    */
@@ -246,7 +296,16 @@ export class JobService {
   }
 
   public getJob(jobId: string): JobRecord | null {
-    const jobRecord = this.storageService.getJobRecord(jobId);
+    const storedJobRecord = this.storageService.getJobRecord(jobId);
+    let jobRecord: JobRecord | null;
+
+    if (storedJobRecord?.status === "failed" && storedJobRecord.jobType === "train_model") {
+      const diagnostics = this.readJobFailureDiagnostics(storedJobRecord);
+      jobRecord = diagnostics ? { ...storedJobRecord, diagnostics } : storedJobRecord;
+    } else {
+      jobRecord = storedJobRecord;
+    }
+
     return jobRecord;
   }
 
@@ -257,12 +316,20 @@ export class JobService {
     if (!jobRecord) {
       result = { kind: "not_found", message: `job '${jobId}' was not found` };
     } else {
-      if (jobRecord.status !== "succeeded") {
-        result = { job: jobRecord, kind: "not_ready" };
+      if (jobRecord.status === "failed") {
+        result = {
+          job: jobRecord,
+          kind: "failed",
+          result: this.buildFailedJobResultPayload(jobRecord, jobRecord.errorMessage || "python worker execution failed"),
+        };
       } else {
-        const persistedResult = this.readPersistedJobResult(jobRecord);
-        const jobResult = jobRecord.jobType === "train_model" ? this.buildTrainingJobResultPayload(jobRecord, persistedResult) : persistedResult;
-        result = { job: jobRecord, kind: "ready", result: jobResult };
+        if (jobRecord.status !== "succeeded") {
+          result = { job: jobRecord, kind: "not_ready" };
+        } else {
+          const persistedResult = this.readPersistedJobResult(jobRecord);
+          const jobResult = jobRecord.jobType === "train_model" ? this.buildTrainingJobResultPayload(jobRecord, persistedResult) : persistedResult;
+          result = { job: jobRecord, kind: "ready", result: jobResult };
+        }
       }
     }
 
@@ -291,7 +358,9 @@ export class JobService {
           this.updateModelAfterSuccess(claimedJob, finishedAt);
         }
       } else {
-        this.storageService.markJobFailed(claimedJob.jobId, finishedAt, "internal_error", executionResult.errorMessage || "python worker execution failed");
+        const failureMessage = executionResult.errorMessage || "python worker execution failed";
+        this.storageService.markJobFailed(claimedJob.jobId, finishedAt, "internal_error", failureMessage);
+        this.writeFailureResult(claimedJob, failureMessage);
 
         if (claimedJob.jobType === "create_model") {
           this.storageService.markModelFailed(claimedJob.modelId, finishedAt);

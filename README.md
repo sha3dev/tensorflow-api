@@ -539,7 +539,7 @@ Status:
 
 ### `GET /api/jobs/:jobId/result`
 
-Returns the JSON job result for successful jobs. Successful training jobs include `modelId`, `status: "succeeded"`, `trainedAt`, and optional `history`. Failed jobs return `409` with the stored `errorCode` and full `errorMessage`, including Python traceback text when available.
+Returns the JSON job result for successful jobs. Successful training jobs include `modelId`, `status: "succeeded"`, `trainedAt`, and optional `history`. Failed jobs return `409` with the stored `errorCode`, full `errorMessage`, and structured `diagnostics`, including Python traceback text and model/training shape summaries when available.
 
 Status:
 
@@ -756,6 +756,60 @@ Opaque JSON result payload returned by `GET /api/jobs/:jobId/result`.
 
 ```ts
 type JobResultPayload = Record<string, unknown>;
+```
+
+### `JobFailureDiagnostics`
+
+Structured diagnostics persisted for failed training jobs.
+
+```ts
+type JobFailureDiagnostics = {
+  modelOutputNames: string[];
+  modelOutputCount: number;
+  trainingInputSummary: TrainingInputSummary;
+  pythonExceptionType: string;
+  traceback: string;
+  stderrTail: string;
+};
+```
+
+### `TrainingInputSummary`
+
+Compact summary of the training request structures captured before `model.fit(...)`.
+
+```ts
+type TrainingInputSummary = {
+  targetKeys: string[];
+  targetShapes: ShapeSummary | null;
+  sampleWeightKeys: string[];
+  sampleWeightShapes: ShapeSummary | null;
+  validationTargetKeys: string[];
+  validationTargetShapes: ShapeSummary | null;
+  validationSampleWeightKeys: string[];
+  validationSampleWeightShapes: ShapeSummary | null;
+};
+```
+
+### `ShapeSummary`
+
+Compact shape summary used inside diagnostics instead of serializing large payloads.
+
+```ts
+type ShapeSummary = number[] | Record<string, ShapeSummary>;
+```
+
+### `FailedJobResultPayload`
+
+Failed job payload returned by `GET /api/jobs/:jobId/result` with status `409`.
+
+```ts
+type FailedJobResultPayload = {
+  modelId: string;
+  status: "failed";
+  errorCode: string;
+  errorMessage: string;
+  diagnostics?: JobFailureDiagnostics;
+};
 ```
 
 ### `PredictionResultPayload`

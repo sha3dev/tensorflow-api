@@ -184,6 +184,7 @@ class FakeModel:
     def __init__(self, model_kind, config):
         self.model_kind = model_kind
         self.config = config
+        self.output_names = config.get("output_names", ["output"])
 
     def save(self, artifact_path):
         Path(artifact_path).write_text(
@@ -191,6 +192,7 @@ class FakeModel:
                 {
                     "config": self.config,
                     "model_kind": self.model_kind,
+                    "output_names": self.output_names,
                 }
             ),
             encoding="utf-8",
@@ -216,7 +218,9 @@ class ModelsApi:
     @staticmethod
     def load_model(artifact_path):
         saved_model = json.loads(Path(artifact_path).read_text(encoding="utf-8"))
-        return FakeModel(saved_model["model_kind"], saved_model["config"])
+        model = FakeModel(saved_model["model_kind"], saved_model["config"])
+        model.output_names = saved_model.get("output_names", ["output"])
+        return model
 
 
 class KerasApi:
@@ -482,23 +486,76 @@ test("python runtime verification reports the configured python binary on failur
 
 test("python worker reports traceback details for training failures", async () => {
   const tempRoot = mkdtempSync(join(tmpdir(), "tensorflow-worker-test-"));
+  const requestPath = join(tempRoot, "train-request.json");
+  const resultPath = join(tempRoot, "train-result.json");
   const artifactPath = join(tempRoot, "artifact.keras");
 
   try {
     createFailingTensorflowModule(tempRoot);
-    writeFileSync(artifactPath, JSON.stringify({ config: { layers: [] }, model_kind: "sequential" }), "utf8");
-
-    const standardError = await executeTrainingFailure(tempRoot, {
+    writeFileSync(
       artifactPath,
-      modelId: "worker-model",
-      trainingInput: {
-        inputs: [[1]],
-        targets: [[0]],
-      },
-    });
+      JSON.stringify({
+        config: { layers: [], output_names: ["regression", "classification"] },
+        model_kind: "sequential",
+        output_names: ["regression", "classification"],
+      }),
+      "utf8",
+    );
+    writeFileSync(
+      requestPath,
+      JSON.stringify({
+        artifactPath,
+        modelId: "worker-model",
+        trainingInput: {
+          inputs: [[1], [2]],
+          sampleWeights: {
+            classification: [2, 0.5],
+            regression: [1, 1],
+          },
+          targets: {
+            classification: [
+              [1, 0],
+              [0, 1],
+            ],
+            regression: [[0.1], [0.2]],
+          },
+          validationSampleWeights: {
+            classification: [0.75],
+            regression: [0.25],
+          },
+          validationTargets: {
+            classification: [[1, 0]],
+            regression: [[0.3]],
+          },
+        },
+      }),
+      "utf8",
+    );
+
+    const standardError = await executeTrainingFailure(tempRoot, JSON.parse(readFileSync(requestPath, "utf8")) as Record<string, unknown>);
+    const resultPayload = JSON.parse(readFileSync(resultPath, "utf8")) as Record<string, unknown>;
 
     assert.match(standardError, /Traceback \(most recent call last\):/);
     assert.match(standardError, /KeyError: 0/);
+    assert.equal(resultPayload.status, "failed");
+    assert.equal(resultPayload.modelId, "worker-model");
+    assert.equal(resultPayload.errorCode, "internal_error");
+    assert.equal((resultPayload.diagnostics as Record<string, unknown>).modelOutputCount, 2);
+    assert.deepEqual((resultPayload.diagnostics as Record<string, unknown>).modelOutputNames, ["regression", "classification"]);
+    assert.equal((resultPayload.diagnostics as Record<string, unknown>).pythonExceptionType, "KeyError");
+    assert.match(String((resultPayload.diagnostics as Record<string, unknown>).traceback), /KeyError: 0/);
+    assert.deepEqual(((resultPayload.diagnostics as Record<string, unknown>).trainingInputSummary as Record<string, unknown>).targetKeys, [
+      "classification",
+      "regression",
+    ]);
+    assert.deepEqual(((resultPayload.diagnostics as Record<string, unknown>).trainingInputSummary as Record<string, unknown>).sampleWeightKeys, [
+      "classification",
+      "regression",
+    ]);
+    assert.deepEqual(((resultPayload.diagnostics as Record<string, unknown>).trainingInputSummary as Record<string, unknown>).targetShapes, {
+      classification: [2, 2],
+      regression: [2, 1],
+    });
   } finally {
     rmSync(tempRoot, { force: true, recursive: true });
   }

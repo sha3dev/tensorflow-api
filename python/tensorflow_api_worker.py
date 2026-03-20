@@ -101,6 +101,69 @@ def to_serializable_output(value):
     return serializable_value
 
 
+def summarize_shape(value):
+    shape_summary = []
+
+    if isinstance(value, dict):
+        shape_summary = {
+            key: summarize_shape(nested_value) for key, nested_value in value.items()
+        }
+    elif isinstance(value, list):
+        if len(value) > 0:
+            nested_shape = summarize_shape(value[0])
+            shape_summary = [len(value), *nested_shape]
+        else:
+            shape_summary = [0]
+
+    return shape_summary
+
+
+def get_structure_keys(value):
+    structure_keys = list(value.keys()) if isinstance(value, dict) else []
+    return structure_keys
+
+
+def build_training_input_summary(training_input: dict):
+    input_summary = {
+        "targetKeys": get_structure_keys(training_input.get("targets")),
+        "targetShapes": summarize_shape(training_input.get("targets"))
+        if "targets" in training_input
+        else None,
+        "sampleWeightKeys": get_structure_keys(training_input.get("sampleWeights")),
+        "sampleWeightShapes": summarize_shape(training_input.get("sampleWeights"))
+        if "sampleWeights" in training_input
+        else None,
+        "validationTargetKeys": get_structure_keys(training_input.get("validationTargets")),
+        "validationTargetShapes": summarize_shape(
+            training_input.get("validationTargets")
+        )
+        if "validationTargets" in training_input
+        else None,
+        "validationSampleWeightKeys": get_structure_keys(
+            training_input.get("validationSampleWeights")
+        ),
+        "validationSampleWeightShapes": summarize_shape(
+            training_input.get("validationSampleWeights")
+        )
+        if "validationSampleWeights" in training_input
+        else None,
+    }
+    return input_summary
+
+
+def build_training_diagnostics(model, training_input: dict):
+    model_output_names = list(getattr(model, "output_names", []) or [])
+    diagnostics = {
+        "modelOutputCount": len(model_output_names),
+        "modelOutputNames": model_output_names,
+        "pythonExceptionType": "",
+        "stderrTail": "",
+        "traceback": "",
+        "trainingInputSummary": build_training_input_summary(training_input),
+    }
+    return diagnostics
+
+
 def build_prediction_outputs(model, prediction_output):
     outputs = None
 
@@ -191,13 +254,34 @@ def train_model(payload: dict, result_path: str) -> None:
     fit_config = normalize_fit_config(payload.get("fitConfig") or {})
     model = tf.keras.models.load_model(artifact_path)
     sample_weight = build_sample_weights(tf, training_input, "sampleWeights")
-    history = model.fit(
-        to_tensor_structure(tf, training_input["inputs"]),
-        to_tensor_structure(tf, training_input["targets"]),
-        sample_weight=sample_weight,
-        validation_data=build_validation_data(tf, training_input),
-        **fit_config,
-    )
+    diagnostics = build_training_diagnostics(model, training_input)
+
+    try:
+        history = model.fit(
+            to_tensor_structure(tf, training_input["inputs"]),
+            to_tensor_structure(tf, training_input["targets"]),
+            sample_weight=sample_weight,
+            validation_data=build_validation_data(tf, training_input),
+            **fit_config,
+        )
+    except Exception as runtime_error:
+        traceback_text = format_runtime_error(runtime_error)
+        write_result(
+            result_path,
+            {
+                "diagnostics": {
+                    **diagnostics,
+                    "pythonExceptionType": type(runtime_error).__name__,
+                    "traceback": traceback_text,
+                },
+                "errorCode": "internal_error",
+                "errorMessage": traceback_text,
+                "modelId": payload["modelId"],
+                "status": "failed",
+            },
+        )
+        raise
+
     model.save(artifact_path)
     write_result(
         result_path,

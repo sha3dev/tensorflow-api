@@ -2,6 +2,8 @@ export { JobService } from "./job.service.ts";
 export type {
   CreateJobResult,
   CreatePredictionJobRequest,
+  FailedJobResultPayload,
+  JobFailureDiagnostics,
   CreateTrainingJobRequest,
   JobListFilter,
   JobProcessingOutcome,
@@ -12,6 +14,8 @@ export type {
   JobType,
   PredictionExecutionResult,
   PredictionResultPayload,
+  ShapeSummary,
+  TrainingInputSummary,
   TrainingJobResultPayload,
   TrainingSampleWeight,
 } from "./job.types.ts";
