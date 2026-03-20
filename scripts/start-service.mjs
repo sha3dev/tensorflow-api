@@ -10,6 +10,7 @@ const VENV_DIR = path.join(ROOT_DIR, ".venv");
 const REQUIREMENTS_PATH = path.join(ROOT_DIR, "requirements", "python-runtime.txt");
 const DEFAULT_PYTHON_VERSION = process.env.TENSORFLOW_API_PYTHON_VERSION || "3.11";
 const UV_INSTALL_DIR = process.env.TENSORFLOW_API_UV_INSTALL_DIR || path.join(homedir(), ".cache", "tensorflow-api", "uv");
+const TENSORFLOW_IMPORT_CHECK = "import tensorflow as tf; print(tf.__version__)";
 
 function getUvExecutablePath() {
   const executablePath = process.platform === "win32" ? path.join(UV_INSTALL_DIR, "uv.exe") : path.join(UV_INSTALL_DIR, "uv");
@@ -103,6 +104,7 @@ async function bootstrapPythonRuntime(uvPath) {
   }
 
   await runCommand(uvPath, ["pip", "install", "--python", pythonPath, "-r", REQUIREMENTS_PATH]);
+  await runCommand(pythonPath, ["-c", TENSORFLOW_IMPORT_CHECK]);
 
   return pythonPath;
 }

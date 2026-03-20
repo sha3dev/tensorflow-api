@@ -63,6 +63,7 @@ What `npm run start` does on first run:
 - creates `.venv/` in the project root
 - installs a managed Python interpreter if needed
 - syncs TensorFlow dependencies from `requirements/python-runtime.txt`
+- verifies that the selected Python can import TensorFlow before starting Node
 - starts the Node service with `PYTHON_BIN` pointing at `.venv`
 
 Default URLs:

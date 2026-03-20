@@ -1,2 +1,2 @@
 tensorflow-macos==2.16.2 ; platform_system == "Darwin" and platform_machine == "arm64"
-tensorflow==2.16.2
+tensorflow==2.16.2 ; not (platform_system == "Darwin" and platform_machine == "arm64")
