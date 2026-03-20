@@ -187,16 +187,52 @@ def build_prediction_outputs(model, prediction_output):
     return outputs
 
 
-def build_sample_weights(tf_module, training_input: dict, field_name: str):
+def align_named_output_structure(model, value):
+    aligned_value = value
+
+    if isinstance(value, dict):
+        output_names = list(getattr(model, "output_names", []) or [])
+
+        if output_names:
+            aligned_value = [value[output_name] for output_name in output_names]
+
+    return aligned_value
+
+
+def build_output_tensor_structure(tf_module, model, value):
+    tensor_structure = None
+    aligned_value = align_named_output_structure(model, value)
+
+    if isinstance(value, dict):
+        tensor_structure = [
+            to_tensor_structure(tf_module, nested_value)
+            for nested_value in aligned_value
+        ]
+    else:
+        tensor_structure = to_tensor_structure(tf_module, aligned_value)
+
+    return tensor_structure
+
+
+def build_fit_targets(tf_module, model, training_input: dict):
+    tensor_targets = build_output_tensor_structure(
+        tf_module, model, training_input["targets"]
+    )
+    return tensor_targets
+
+
+def build_sample_weights(tf_module, model, training_input: dict, field_name: str):
     sample_weights = None
 
     if field_name in training_input:
-        sample_weights = to_tensor_structure(tf_module, training_input[field_name])
+        sample_weights = build_output_tensor_structure(
+            tf_module, model, training_input[field_name]
+        )
 
     return sample_weights
 
 
-def build_validation_data(tf_module, training_input: dict):
+def build_validation_data(tf_module, model, training_input: dict):
     validation_data = None
 
     if (
@@ -204,15 +240,18 @@ def build_validation_data(tf_module, training_input: dict):
         and "validationTargets" in training_input
     ):
         validation_sample_weights = build_sample_weights(
-            tf_module, training_input, "validationSampleWeights"
+            tf_module, model, training_input, "validationSampleWeights"
+        )
+        validation_targets = build_output_tensor_structure(
+            tf_module, model, training_input["validationTargets"]
         )
         validation_data = (
             to_tensor_structure(tf_module, training_input["validationInputs"]),
-            to_tensor_structure(tf_module, training_input["validationTargets"]),
+            validation_targets,
             validation_sample_weights,
         ) if validation_sample_weights is not None else (
             to_tensor_structure(tf_module, training_input["validationInputs"]),
-            to_tensor_structure(tf_module, training_input["validationTargets"]),
+            validation_targets,
         )
 
     return validation_data
@@ -253,15 +292,15 @@ def train_model(payload: dict, result_path: str) -> None:
     training_input = payload["trainingInput"]
     fit_config = normalize_fit_config(payload.get("fitConfig") or {})
     model = tf.keras.models.load_model(artifact_path)
-    sample_weight = build_sample_weights(tf, training_input, "sampleWeights")
+    sample_weight = build_sample_weights(tf, model, training_input, "sampleWeights")
     diagnostics = build_training_diagnostics(model, training_input)
 
     try:
         history = model.fit(
             to_tensor_structure(tf, training_input["inputs"]),
-            to_tensor_structure(tf, training_input["targets"]),
+            build_fit_targets(tf, model, training_input),
             sample_weight=sample_weight,
-            validation_data=build_validation_data(tf, training_input),
+            validation_data=build_validation_data(tf, model, training_input),
             **fit_config,
         )
     except Exception as runtime_error:

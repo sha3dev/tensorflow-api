@@ -116,12 +116,18 @@ class FakeModel:
         validation_sample_weight = (
             validation_data[2] if validation_data is not None and len(validation_data) == 3 else None
         )
+        validation_targets = (
+            validation_data[1] if validation_data is not None and len(validation_data) >= 2 else None
+        )
+        target_is_converted = targets.get("converted") if isinstance(targets, dict) else None
         return FakeHistory(
             {
                 "batch_size": [kwargs.get("batch_size")],
                 "input_is_converted": [inputs.get("converted")],
                 "sample_weight": [sample_weight],
-                "target_is_converted": [targets.get("converted")],
+                "target_is_converted": [target_is_converted],
+                "targets": [targets],
+                "validation_targets": [validation_targets],
                 "validation_sample_weight": [validation_sample_weight],
                 "validation_split": [kwargs.get("validation_split")],
             }
@@ -378,16 +384,37 @@ test("python worker passes multi-output sample weights into fit", async () => {
     };
 
     assert.deepEqual(resultPayload.history.sample_weight, [
-      {
-        classification: { converted: true, value: [2, 0.5] },
-        regression: { converted: true, value: [1, 1] },
-      },
+      [
+        { converted: true, value: [1, 1] },
+        { converted: true, value: [2, 0.5] },
+      ],
+    ]);
+    assert.deepEqual(resultPayload.history.targets, [
+      [
+        { converted: true, value: [[0.1], [0.2]] },
+        {
+          converted: true,
+          value: [
+            [1, 0],
+            [0, 1],
+          ],
+        },
+      ],
     ]);
     assert.deepEqual(resultPayload.history.validation_sample_weight, [
-      {
-        classification: { converted: true, value: [0.75] },
-        regression: { converted: true, value: [0.25] },
-      },
+      [
+        { converted: true, value: [0.25] },
+        { converted: true, value: [0.75] },
+      ],
+    ]);
+    assert.deepEqual(resultPayload.history.validation_targets, [
+      [
+        { converted: true, value: [[0.3]] },
+        {
+          converted: true,
+          value: [[1, 0]],
+        },
+      ],
     ]);
   } finally {
     rmSync(tempRoot, { force: true, recursive: true });
