@@ -242,6 +242,75 @@ test("service creates models, exposes state, and rejects duplicates", async () =
   }
 });
 
+test("service patches model metadata and exposes it through model endpoints", async () => {
+  const harness = await createHarness();
+
+  try {
+    await createReadyModel(harness, "metadata-patch-model", { version: 1 });
+
+    const patchResponse = await fetch(`${harness.baseUrl}/api/models/metadata-patch-model/metadata`, {
+      body: JSON.stringify({
+        architecture: "temporal-fusion",
+        classWeights: { down: 1.25, up: 0.8 },
+        featureNames: ["volume", "volatility"],
+        trainedAt: "2026-03-20T14:31:59.000Z",
+      }),
+      headers: { "content-type": "application/json" },
+      method: "PATCH",
+    });
+    const patchPayload = await patchResponse.json();
+    const modelResponse = await fetch(`${harness.baseUrl}/api/models/metadata-patch-model`);
+    const modelPayload = await modelResponse.json();
+    const modelsResponse = await fetch(`${harness.baseUrl}/api/models`);
+    const modelsPayload = await modelsResponse.json();
+
+    assert.equal(patchResponse.status, 200);
+    assert.deepEqual(patchPayload.metadata, {
+      architecture: "temporal-fusion",
+      classWeights: { down: 1.25, up: 0.8 },
+      featureNames: ["volume", "volatility"],
+      trainedAt: "2026-03-20T14:31:59.000Z",
+    });
+    assert.equal(modelResponse.status, 200);
+    assert.deepEqual(modelPayload.metadata, {
+      architecture: "temporal-fusion",
+      classWeights: { down: 1.25, up: 0.8 },
+      featureNames: ["volume", "volatility"],
+      trainedAt: "2026-03-20T14:31:59.000Z",
+    });
+    assert.equal(modelsResponse.status, 200);
+    assert.deepEqual(modelsPayload[0].metadata, {
+      architecture: "temporal-fusion",
+      classWeights: { down: 1.25, up: 0.8 },
+      featureNames: ["volume", "volatility"],
+      trainedAt: "2026-03-20T14:31:59.000Z",
+    });
+  } finally {
+    await harness.close();
+  }
+});
+
+test("service returns not found when patching metadata for a missing model", async () => {
+  const harness = await createHarness();
+
+  try {
+    const patchResponse = await fetch(`${harness.baseUrl}/api/models/missing-model/metadata`, {
+      body: JSON.stringify({ logicalKey: "btc-trend" }),
+      headers: { "content-type": "application/json" },
+      method: "PATCH",
+    });
+    const patchPayload = await patchResponse.json();
+
+    assert.equal(patchResponse.status, 404);
+    assert.deepEqual(patchPayload, {
+      code: "not_found",
+      message: "model 'missing-model' was not found",
+    });
+  } finally {
+    await harness.close();
+  }
+});
+
 test("service processes create and train jobs while prediction stays synchronous", async () => {
   const harness = await createHarness();
 

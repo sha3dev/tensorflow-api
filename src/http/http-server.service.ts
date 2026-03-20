@@ -905,6 +905,21 @@ setInterval(() => {
     return response;
   }
 
+  private async handlePatchModelMetadataRequest(context: Context): Promise<Response> {
+    const modelId = this.requirePathParam(context, "modelId");
+    const metadata = await this.readJsonBody(context);
+    const updateResult = this.modelService.updateModelMetadata(modelId, metadata);
+    let response: Response;
+
+    if (updateResult.kind === "not_found") {
+      response = this.createJsonResponse(context, this.buildJsonError("not_found", updateResult.message), 404);
+    } else {
+      response = this.createJsonResponse(context, updateResult.model, 200);
+    }
+
+    return response;
+  }
+
   private handleDeleteModelRequest(context: Context): Response {
     const modelId = this.requirePathParam(context, "modelId");
     const deleteResult = this.modelService.deleteModel(modelId);
@@ -1164,6 +1179,7 @@ setInterval(() => {
     app.get("/api/models", this.handleListModelsRequest.bind(this));
     app.get("/api/models/:modelId", this.handleGetModelRequest.bind(this));
     app.post("/api/models", this.handleCreateModelRequest.bind(this));
+    app.patch("/api/models/:modelId/metadata", this.handlePatchModelMetadataRequest.bind(this));
     app.delete("/api/models/:modelId", this.handleDeleteModelRequest.bind(this));
     app.post("/api/models/:modelId/training-jobs", this.handleCreateTrainingJobRequest.bind(this));
     app.post("/api/models/:modelId/prediction-jobs", this.handleCreatePredictionJobRequest.bind(this));

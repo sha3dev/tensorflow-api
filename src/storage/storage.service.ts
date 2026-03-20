@@ -328,6 +328,14 @@ export class StorageService {
     this.database.prepare("UPDATE model_record SET last_training_job_id = ?, updated_at = ? WHERE model_id = ?").run(jobId, updatedAt, modelId);
   }
 
+  public updateModelMetadata(modelId: string, metadata: Record<string, unknown>, updatedAt: string): boolean {
+    const executionResult = this.database
+      .prepare("UPDATE model_record SET metadata_json = ?, updated_at = ? WHERE model_id = ?")
+      .run(JSON.stringify(metadata), updatedAt, modelId);
+    const hasUpdatedModel = executionResult.changes > 0;
+    return hasUpdatedModel;
+  }
+
   public markModelTrainingSucceeded(modelId: string, jobId: string, updatedAt: string): void {
     this.database
       .prepare(`

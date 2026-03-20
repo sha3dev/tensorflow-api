@@ -49,3 +49,13 @@ export type DeleteModelResult =
       kind: "conflict" | "not_found";
       message: string;
     };
+
+export type UpdateModelMetadataResult =
+  | {
+      kind: "not_found";
+      message: string;
+    }
+  | {
+      kind: "updated";
+      model: ModelRecord;
+    };

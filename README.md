@@ -482,6 +482,16 @@ Status:
 - `200`
 - `404` when the model does not exist
 
+### `PATCH /api/models/:modelId/metadata`
+
+Replaces the persisted model metadata with the JSON object sent in the request body and returns the updated model record.
+
+Status:
+
+- `200`
+- `400` for invalid JSON object payloads
+- `404` when the model does not exist
+
 ### `DELETE /api/models/:modelId`
 
 Deletes a model, its persisted artifact directory, and its recorded job history. The request is rejected while the model still has queued or running jobs.

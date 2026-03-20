@@ -11,7 +11,7 @@ import { join } from "node:path";
 
 import type { JobRecord } from "../job/index.ts";
 import type { StorageService } from "../storage/index.ts";
-import type { CreateModelRequest, CreateModelResult, DeleteModelResult, ModelRecord } from "./index.ts";
+import type { CreateModelRequest, CreateModelResult, DeleteModelResult, ModelRecord, UpdateModelMetadataResult } from "./index.ts";
 
 /**
  * @section class
@@ -139,6 +139,28 @@ export class ModelService {
   public getModel(modelId: string): ModelRecord | null {
     const modelRecord = this.storageService.getModelRecord(modelId);
     return modelRecord;
+  }
+
+  public updateModelMetadata(modelId: string, metadata: Record<string, unknown>): UpdateModelMetadataResult {
+    const existingModel = this.storageService.getModelRecord(modelId);
+    let result: UpdateModelMetadataResult;
+
+    if (!existingModel) {
+      result = { kind: "not_found", message: `model '${modelId}' was not found` };
+    } else {
+      const updatedAt = this.now();
+      this.storageService.updateModelMetadata(modelId, metadata, updatedAt);
+      result = {
+        kind: "updated",
+        model: this.storageService.getModelRecord(modelId) || {
+          ...existingModel,
+          metadata,
+          updatedAt,
+        },
+      };
+    }
+
+    return result;
   }
 
   public deleteModel(modelId: string): DeleteModelResult {
