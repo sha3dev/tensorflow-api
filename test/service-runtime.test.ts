@@ -487,6 +487,8 @@ test("service keeps prior metadata when training fails", async () => {
         stderrTail: "",
         traceback: "Traceback (most recent call last):\nKeyError: 0",
         trainingInputSummary: {
+          inputShape: [1, 1],
+          inputTypes: "int",
           sampleWeightKeys: ["classification", "regression"],
           sampleWeightShapes: {
             classification: [1],
@@ -497,6 +499,8 @@ test("service keeps prior metadata when training fails", async () => {
             classification: [1, 2],
             regression: [1, 1],
           },
+          validationInputShape: [1, 1],
+          validationInputTypes: "int",
           validationSampleWeightKeys: ["classification", "regression"],
           validationSampleWeightShapes: {
             classification: [1],
@@ -567,6 +571,8 @@ test("service keeps prior metadata when training fails", async () => {
     assert.equal(failedJobPayload.status, "failed");
     assert.deepEqual(failedJobPayload.diagnostics.modelOutputNames, ["regression", "classification"]);
     assert.equal(failedJobPayload.diagnostics.modelOutputCount, 2);
+    assert.deepEqual(failedJobPayload.diagnostics.trainingInputSummary.inputShape, [1, 1]);
+    assert.equal(failedJobPayload.diagnostics.trainingInputSummary.inputTypes, "int");
     assert.deepEqual(failedJobPayload.diagnostics.trainingInputSummary.targetKeys, ["classification", "regression"]);
     assert.deepEqual(failedJobPayload.diagnostics.trainingInputSummary.sampleWeightKeys, ["classification", "regression"]);
     assert.match(failedJobPayload.diagnostics.traceback, /KeyError: 0/);
@@ -585,6 +591,8 @@ test("service keeps prior metadata when training fails", async () => {
         stderrTail: "simulated train-model failure",
         traceback: "Traceback (most recent call last):\nKeyError: 0",
         trainingInputSummary: {
+          inputShape: [1, 1],
+          inputTypes: "int",
           sampleWeightKeys: ["classification", "regression"],
           sampleWeightShapes: {
             classification: [1],
@@ -595,6 +603,8 @@ test("service keeps prior metadata when training fails", async () => {
             classification: [1, 2],
             regression: [1, 1],
           },
+          validationInputShape: [1, 1],
+          validationInputTypes: "int",
           validationSampleWeightKeys: ["classification", "regression"],
           validationSampleWeightShapes: {
             classification: [1],

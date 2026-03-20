@@ -3,6 +3,7 @@
 import contextlib
 import io
 import json
+import numbers
 import sys
 import traceback
 from pathlib import Path
@@ -12,6 +13,8 @@ FIT_CONFIG_KEY_ALIASES = {
     "batchSize": "batch_size",
     "validationSplit": "validation_split",
 }
+
+TYPE_SAMPLE_LIMIT = 25
 
 
 def write_result(result_path: str, payload: dict) -> None:
@@ -84,7 +87,7 @@ def normalize_compile_config(model, raw_compile_config: dict) -> dict:
 
 
 def to_tensor(tf_module, value):
-    tensor_value = tf_module.convert_to_tensor(value)
+    tensor_value = tf_module.convert_to_tensor(normalize_numeric_structure(value))
     return tensor_value
 
 
@@ -100,6 +103,38 @@ def to_tensor_structure(tf_module, value):
         tensor_structure = to_tensor(tf_module, value)
 
     return tensor_structure
+
+
+def normalize_numeric_structure(value):
+    normalized_value = value
+
+    if isinstance(value, dict):
+        normalized_value = {
+            key: normalize_numeric_structure(nested_value)
+            for key, nested_value in value.items()
+        }
+    elif isinstance(value, (list, tuple)):
+        normalized_sequence = [
+            normalize_numeric_structure(nested_value) for nested_value in value
+        ]
+        scalar_types = {
+            type(nested_value).__name__
+            for nested_value in normalized_sequence
+            if isinstance(nested_value, numbers.Real)
+        }
+        if (
+            len(normalized_sequence) > 0
+            and len(scalar_types) > 1
+            and all(
+                isinstance(nested_value, numbers.Real)
+                for nested_value in normalized_sequence
+            )
+        ):
+            normalized_value = [float(nested_value) for nested_value in normalized_sequence]
+        else:
+            normalized_value = normalized_sequence
+
+    return normalized_value
 
 
 def to_serializable_output(value):
@@ -140,8 +175,67 @@ def get_structure_keys(value):
     return structure_keys
 
 
+def summarize_scalar_type(value):
+    type_name = type(value).__name__
+
+    if isinstance(value, bool):
+        type_name = "bool"
+    elif isinstance(value, int):
+        type_name = "int"
+    elif isinstance(value, float):
+        type_name = "float"
+    elif value is None:
+        type_name = "null"
+
+    return type_name
+
+
+def combine_type_names(type_names):
+    flattened_type_names = []
+
+    for type_name in type_names:
+        flattened_type_names.extend(type_name.split("|"))
+
+    combined_type_names = list(dict.fromkeys(flattened_type_names))
+    type_summary = "|".join(combined_type_names)
+    return type_summary
+
+
+def summarize_types(value):
+    type_summary = summarize_scalar_type(value)
+
+    if isinstance(value, dict):
+        type_summary = {
+            key: summarize_types(nested_value) for key, nested_value in value.items()
+        }
+    elif isinstance(value, (list, tuple)):
+        if len(value) == 0:
+            type_summary = "empty"
+        else:
+            nested_type_names = [
+                summarize_types(nested_value) for nested_value in value[:TYPE_SAMPLE_LIMIT]
+            ]
+            if all(isinstance(type_name, str) for type_name in nested_type_names):
+                type_summary = combine_type_names(nested_type_names)
+            else:
+                type_summary = combine_type_names(
+                    [
+                        json.dumps(type_name, sort_keys=True)
+                        for type_name in nested_type_names
+                    ]
+                )
+
+    return type_summary
+
+
 def build_training_input_summary(training_input: dict):
     input_summary = {
+        "inputShape": summarize_shape(training_input.get("inputs"))
+        if "inputs" in training_input
+        else None,
+        "inputTypes": summarize_types(training_input.get("inputs"))
+        if "inputs" in training_input
+        else None,
         "targetKeys": get_structure_keys(training_input.get("targets")),
         "targetShapes": summarize_shape(training_input.get("targets"))
         if "targets" in training_input
@@ -155,6 +249,12 @@ def build_training_input_summary(training_input: dict):
             training_input.get("validationTargets")
         )
         if "validationTargets" in training_input
+        else None,
+        "validationInputShape": summarize_shape(training_input.get("validationInputs"))
+        if "validationInputs" in training_input
+        else None,
+        "validationInputTypes": summarize_types(training_input.get("validationInputs"))
+        if "validationInputs" in training_input
         else None,
         "validationSampleWeightKeys": get_structure_keys(
             training_input.get("validationSampleWeights")
@@ -311,15 +411,18 @@ def train_model(payload: dict, result_path: str) -> None:
     training_input = payload["trainingInput"]
     fit_config = normalize_fit_config(payload.get("fitConfig") or {})
     model = tf.keras.models.load_model(artifact_path)
-    sample_weight = build_sample_weights(tf, model, training_input, "sampleWeights")
     diagnostics = build_training_diagnostics(model, training_input)
 
     try:
+        tensor_inputs = to_tensor_structure(tf, training_input["inputs"])
+        tensor_targets = build_fit_targets(tf, model, training_input)
+        sample_weight = build_sample_weights(tf, model, training_input, "sampleWeights")
+        validation_data = build_validation_data(tf, model, training_input)
         history = model.fit(
-            to_tensor_structure(tf, training_input["inputs"]),
-            build_fit_targets(tf, model, training_input),
+            tensor_inputs,
+            tensor_targets,
             sample_weight=sample_weight,
-            validation_data=build_validation_data(tf, model, training_input),
+            validation_data=validation_data,
             **fit_config,
         )
     except Exception as runtime_error:

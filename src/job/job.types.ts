@@ -10,11 +10,21 @@ export type ShapeSummaryRecord = {
 
 export type ShapeSummary = ShapeSummaryRecord | number[];
 
+export type TypeSummaryRecord = {
+  [key: string]: TypeSummary;
+};
+
+export type TypeSummary = string | TypeSummaryRecord;
+
 export type TrainingInputSummary = {
+  inputShape: ShapeSummary | null;
+  inputTypes: TypeSummary | null;
   sampleWeightKeys: string[];
   sampleWeightShapes: ShapeSummary | null;
   targetKeys: string[];
   targetShapes: ShapeSummary | null;
+  validationInputShape: ShapeSummary | null;
+  validationInputTypes: TypeSummary | null;
   validationSampleWeightKeys: string[];
   validationSampleWeightShapes: ShapeSummary | null;
   validationTargetKeys: string[];

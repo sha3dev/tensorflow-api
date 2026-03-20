@@ -389,6 +389,99 @@ keras = KerasApi()
   writeFileSync(join(moduleRootPath, "tensorflow.py"), moduleSource, "utf8");
 }
 
+function createStrictInputTensorflowModule(moduleRootPath: string): void {
+  const moduleSource = `__version__ = "fake-tf-1.0.0"
+
+import json
+from pathlib import Path
+
+
+def _flatten_scalars(value):
+    if isinstance(value, (list, tuple)):
+        flattened = []
+        for nested_value in value:
+            flattened.extend(_flatten_scalars(nested_value))
+        return flattened
+    return [value]
+
+
+def convert_to_tensor(value):
+    flattened = _flatten_scalars(value)
+    scalar_types = {type(nested_value).__name__ for nested_value in flattened}
+
+    if "str" in scalar_types and len(scalar_types) > 1:
+        raise ValueError("Can't convert Python sequence with mixed types to Tensor")
+
+    if "int" in scalar_types and "float" in scalar_types:
+        raise ValueError("Can't convert Python sequence with mixed types to Tensor")
+
+    return {"converted": True, "value": value}
+
+
+class FakeHistory:
+    def __init__(self, history):
+        self.history = history
+
+
+class FakeModel:
+    def __init__(self, model_kind, config):
+        self.model_kind = model_kind
+        self.config = config
+        self.output_names = config.get("output_names", ["output"])
+
+    def save(self, artifact_path):
+        Path(artifact_path).write_text(
+            json.dumps(
+                {
+                    "config": self.config,
+                    "model_kind": self.model_kind,
+                    "output_names": self.output_names,
+                }
+            ),
+            encoding="utf-8",
+        )
+
+    def fit(self, inputs, targets, validation_data=None, sample_weight=None, **kwargs):
+        return FakeHistory(
+            {
+                "inputs": [inputs],
+                "targets": [targets],
+            }
+        )
+
+
+class Sequential:
+    @staticmethod
+    def from_config(config):
+        return FakeModel("sequential", config)
+
+
+class Model:
+    @staticmethod
+    def from_config(config):
+        return FakeModel("functional", config)
+
+
+class ModelsApi:
+    @staticmethod
+    def load_model(artifact_path):
+        saved_model = json.loads(Path(artifact_path).read_text(encoding="utf-8"))
+        model = FakeModel(saved_model["model_kind"], saved_model["config"])
+        model.output_names = saved_model.get("output_names", ["output"])
+        return model
+
+
+class KerasApi:
+    Sequential = Sequential
+    Model = Model
+    models = ModelsApi()
+
+
+keras = KerasApi()
+`;
+  writeFileSync(join(moduleRootPath, "tensorflow.py"), moduleSource, "utf8");
+}
+
 test("python worker normalizes fit config keys and converts training arrays", async () => {
   const tempRoot = mkdtempSync(join(tmpdir(), "tensorflow-worker-test-"));
   const requestPath = join(tempRoot, "train-request.json");
@@ -431,6 +524,75 @@ test("python worker normalizes fit config keys and converts training arrays", as
     assert.deepEqual(resultPayload.history.input_is_converted, [true]);
     assert.deepEqual(resultPayload.history.sample_weight, [null]);
     assert.deepEqual(resultPayload.history.target_is_converted, [true]);
+  } finally {
+    rmSync(tempRoot, { force: true, recursive: true });
+  }
+});
+
+test("python worker normalizes mixed numeric training inputs before tensor conversion", async () => {
+  const tempRoot = mkdtempSync(join(tmpdir(), "tensorflow-worker-test-"));
+  const requestPath = join(tempRoot, "train-request.json");
+  const resultPath = join(tempRoot, "train-result.json");
+  const artifactPath = join(tempRoot, "artifact.keras");
+
+  try {
+    createStrictInputTensorflowModule(tempRoot);
+    writeFileSync(artifactPath, JSON.stringify({ config: { layers: [] }, model_kind: "functional", output_names: ["regression", "classification"] }), "utf8");
+    writeFileSync(
+      requestPath,
+      JSON.stringify({
+        artifactPath,
+        modelId: "worker-model",
+        trainingInput: {
+          inputs: [
+            [1, 2.5],
+            [3, 4.25],
+          ],
+          sampleWeights: {
+            classification: [2, 0.5],
+            regression: [1, 1],
+          },
+          targets: {
+            classification: [
+              [1, 0],
+              [0, 1],
+            ],
+            regression: [[0.1], [0.2]],
+          },
+          validationInputs: [[5, 6.5]],
+          validationSampleWeights: {
+            classification: [0.75],
+            regression: [0.25],
+          },
+          validationTargets: {
+            classification: [[1, 0]],
+            regression: [[0.3]],
+          },
+        },
+      }),
+      "utf8",
+    );
+
+    await EXEC_FILE_ASYNC("python3", ["python/tensorflow_api_worker.py", "train-model", requestPath, resultPath], {
+      cwd: "/Users/jc/Documents/GitHub/tensorflow-api",
+      env: { ...process.env, PYTHONPATH: tempRoot },
+    });
+
+    const resultPayload = JSON.parse(readFileSync(resultPath, "utf8")) as {
+      history: Record<string, unknown[]>;
+      status: string;
+    };
+
+    assert.equal(resultPayload.status, "trained");
+    assert.deepEqual(resultPayload.history.inputs, [
+      {
+        converted: true,
+        value: [
+          [1.0, 2.5],
+          [3.0, 4.25],
+        ],
+      },
+    ]);
   } finally {
     rmSync(tempRoot, { force: true, recursive: true });
   }
@@ -796,6 +958,8 @@ test("python worker reports traceback details for training failures", async () =
     assert.deepEqual((resultPayload.diagnostics as Record<string, unknown>).modelOutputNames, ["regression", "classification"]);
     assert.equal((resultPayload.diagnostics as Record<string, unknown>).pythonExceptionType, "KeyError");
     assert.match(String((resultPayload.diagnostics as Record<string, unknown>).traceback), /KeyError: 0/);
+    assert.deepEqual(((resultPayload.diagnostics as Record<string, unknown>).trainingInputSummary as Record<string, unknown>).inputShape, [2, 1]);
+    assert.equal(((resultPayload.diagnostics as Record<string, unknown>).trainingInputSummary as Record<string, unknown>).inputTypes, "int");
     assert.deepEqual(((resultPayload.diagnostics as Record<string, unknown>).trainingInputSummary as Record<string, unknown>).targetKeys, [
       "classification",
       "regression",
@@ -808,6 +972,50 @@ test("python worker reports traceback details for training failures", async () =
       classification: [2, 2],
       regression: [2, 1],
     });
+  } finally {
+    rmSync(tempRoot, { force: true, recursive: true });
+  }
+});
+
+test("python worker includes input diagnostics when input tensor conversion fails", async () => {
+  const tempRoot = mkdtempSync(join(tmpdir(), "tensorflow-worker-test-"));
+  const requestPath = join(tempRoot, "train-request.json");
+  const resultPath = join(tempRoot, "train-result.json");
+  const artifactPath = join(tempRoot, "artifact.keras");
+
+  try {
+    createStrictInputTensorflowModule(tempRoot);
+    writeFileSync(artifactPath, JSON.stringify({ config: { layers: [] }, model_kind: "sequential" }), "utf8");
+    writeFileSync(
+      requestPath,
+      JSON.stringify({
+        artifactPath,
+        modelId: "worker-model",
+        trainingInput: {
+          inputs: [
+            [1, "bad"],
+            [3, 4],
+          ],
+          targets: [[0], [1]],
+          validationInputs: [[5, "bad"]],
+          validationTargets: [[1]],
+        },
+      }),
+      "utf8",
+    );
+
+    const standardError = await executeTrainingFailure(tempRoot, JSON.parse(readFileSync(requestPath, "utf8")) as Record<string, unknown>);
+    const resultPayload = JSON.parse(readFileSync(resultPath, "utf8")) as Record<string, unknown>;
+    const trainingInputSummary = (resultPayload.diagnostics as Record<string, unknown>).trainingInputSummary as Record<string, unknown>;
+
+    assert.match(standardError, /ValueError: Can't convert Python sequence with mixed types to Tensor/);
+    assert.equal(resultPayload.status, "failed");
+    assert.equal((resultPayload.diagnostics as Record<string, unknown>).pythonExceptionType, "ValueError");
+    assert.deepEqual(trainingInputSummary.inputShape, [2, 2]);
+    assert.equal(trainingInputSummary.inputTypes, "int|str");
+    assert.deepEqual(trainingInputSummary.validationInputShape, [1, 2]);
+    assert.equal(trainingInputSummary.validationInputTypes, "int|str");
+    assert.equal(JSON.stringify(trainingInputSummary).includes('"bad"'), false);
   } finally {
     rmSync(tempRoot, { force: true, recursive: true });
   }

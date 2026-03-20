@@ -789,10 +789,14 @@ Compact summary of the training request structures captured before `model.fit(..
 
 ```ts
 type TrainingInputSummary = {
+  inputShape: ShapeSummary | null;
+  inputTypes: TypeSummary | null;
   targetKeys: string[];
   targetShapes: ShapeSummary | null;
   sampleWeightKeys: string[];
   sampleWeightShapes: ShapeSummary | null;
+  validationInputShape: ShapeSummary | null;
+  validationInputTypes: TypeSummary | null;
   validationTargetKeys: string[];
   validationTargetShapes: ShapeSummary | null;
   validationSampleWeightKeys: string[];
@@ -806,6 +810,14 @@ Compact shape summary used inside diagnostics instead of serializing large paylo
 
 ```ts
 type ShapeSummary = number[] | Record<string, ShapeSummary>;
+```
+
+### `TypeSummary`
+
+Compact type summary used inside diagnostics for inputs without serializing full payloads.
+
+```ts
+type TypeSummary = string | Record<string, TypeSummary>;
 ```
 
 ### `FailedJobResultPayload`
