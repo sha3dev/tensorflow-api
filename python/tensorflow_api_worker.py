@@ -2,6 +2,7 @@
 
 import json
 import sys
+import traceback
 from pathlib import Path
 
 
@@ -45,6 +46,14 @@ def require_tensorflow():
             "tensorflow is not installed in the configured Python environment"
         ) from import_error
     return tensorflow_module
+
+
+def format_runtime_error(runtime_error: Exception) -> str:
+    error_lines = traceback.format_exception(
+        type(runtime_error), runtime_error, runtime_error.__traceback__
+    )
+    formatted_error = "".join(error_lines).strip()
+    return formatted_error
 
 
 def normalize_fit_config(raw_fit_config: dict) -> dict:
@@ -221,7 +230,7 @@ def main() -> int:
             payload = load_stdin_request()
             predict_model_to_stdout(payload)
         except Exception as runtime_error:  # noqa: BLE001
-            print(str(runtime_error), file=sys.stderr)
+            print(format_runtime_error(runtime_error), file=sys.stderr)
             return 1
         return 0
 
@@ -245,7 +254,7 @@ def main() -> int:
         else:
             raise ValueError(f"unsupported action: {action}")
     except Exception as runtime_error:  # noqa: BLE001
-        print(str(runtime_error), file=sys.stderr)
+        print(format_runtime_error(runtime_error), file=sys.stderr)
         return 1
 
     return 0

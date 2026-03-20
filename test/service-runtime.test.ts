@@ -171,6 +171,8 @@ test("service exposes root metadata, dashboard shell, dashboard asset, and empty
     assert.equal(assetResponse.status, 200);
     assert.match(assetSource, /\/api\/state/);
     assert.match(assetSource, /delete-model/);
+    assert.match(assetSource, /Expand for full traceback/);
+    assert.match(assetSource, /error-details/);
     assert.equal(stateResponse.status, 200);
     assert.deepEqual(statePayload, {
       models: [],

@@ -42,6 +42,30 @@ async function executePredictionOverStdio(tempRoot: string, payload: Record<stri
   return result;
 }
 
+async function executeTrainingFailure(tempRoot: string, payload: Record<string, unknown>): Promise<string> {
+  const requestPath = join(tempRoot, "train-request.json");
+  const resultPath = join(tempRoot, "train-result.json");
+  let standardError = "";
+
+  writeFileSync(requestPath, JSON.stringify(payload), "utf8");
+
+  await new Promise<void>((resolve) => {
+    const childProcess = spawn("python3", ["python/tensorflow_api_worker.py", "train-model", requestPath, resultPath], {
+      cwd: "/Users/jc/Documents/GitHub/tensorflow-api",
+      env: { ...process.env, PYTHONPATH: tempRoot },
+    });
+
+    childProcess.stderr.on("data", (chunk: Buffer) => {
+      standardError += String(chunk);
+    });
+    childProcess.on("close", () => {
+      resolve();
+    });
+  });
+
+  return standardError.trim();
+}
+
 function createFakeTensorflowModule(moduleRootPath: string): void {
   const moduleSource = `__version__ = "fake-tf-1.0.0"
 
@@ -132,6 +156,67 @@ class ModelsApi:
         model.compile_config = saved_model.get("compile_config", {})
         model.output_names = saved_model.get("output_names", ["output"])
         return model
+
+
+class KerasApi:
+    Sequential = Sequential
+    Model = Model
+    models = ModelsApi()
+
+
+keras = KerasApi()
+`;
+  writeFileSync(join(moduleRootPath, "tensorflow.py"), moduleSource, "utf8");
+}
+
+function createFailingTensorflowModule(moduleRootPath: string): void {
+  const moduleSource = `__version__ = "fake-tf-1.0.0"
+
+import json
+from pathlib import Path
+
+
+def convert_to_tensor(value):
+    return value
+
+
+class FakeModel:
+    def __init__(self, model_kind, config):
+        self.model_kind = model_kind
+        self.config = config
+
+    def save(self, artifact_path):
+        Path(artifact_path).write_text(
+            json.dumps(
+                {
+                    "config": self.config,
+                    "model_kind": self.model_kind,
+                }
+            ),
+            encoding="utf-8",
+        )
+
+    def fit(self, inputs, targets, validation_data=None, sample_weight=None, **kwargs):
+        raise KeyError(0)
+
+
+class Sequential:
+    @staticmethod
+    def from_config(config):
+        return FakeModel("sequential", config)
+
+
+class Model:
+    @staticmethod
+    def from_config(config):
+        return FakeModel("functional", config)
+
+
+class ModelsApi:
+    @staticmethod
+    def load_model(artifact_path):
+        saved_model = json.loads(Path(artifact_path).read_text(encoding="utf-8"))
+        return FakeModel(saved_model["model_kind"], saved_model["config"])
 
 
 class KerasApi:
@@ -393,4 +478,28 @@ test("python runtime verification reports the configured python binary on failur
   assert.throws(() => {
     pythonRuntimeService.verifyRuntime();
   }, /python runtime check failed.*python-does-not-exist/);
+});
+
+test("python worker reports traceback details for training failures", async () => {
+  const tempRoot = mkdtempSync(join(tmpdir(), "tensorflow-worker-test-"));
+  const artifactPath = join(tempRoot, "artifact.keras");
+
+  try {
+    createFailingTensorflowModule(tempRoot);
+    writeFileSync(artifactPath, JSON.stringify({ config: { layers: [] }, model_kind: "sequential" }), "utf8");
+
+    const standardError = await executeTrainingFailure(tempRoot, {
+      artifactPath,
+      modelId: "worker-model",
+      trainingInput: {
+        inputs: [[1]],
+        targets: [[0]],
+      },
+    });
+
+    assert.match(standardError, /Traceback \(most recent call last\):/);
+    assert.match(standardError, /KeyError: 0/);
+  } finally {
+    rmSync(tempRoot, { force: true, recursive: true });
+  }
 });

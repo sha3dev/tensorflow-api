@@ -427,6 +427,9 @@ export class HttpServerService {
         padding-right: 10px;
         padding-left: 10px;
       }
+      .table-jobs {
+        table-layout: fixed;
+      }
       .table-main td:nth-child(1),
       .table-main th:nth-child(1),
       .table-jobs td:nth-child(1),
@@ -434,6 +437,67 @@ export class HttpServerService {
       .table-jobs td:nth-child(8),
       .table-jobs th:nth-child(8) {
         white-space: normal;
+      }
+      .table-jobs th:nth-child(1),
+      .table-jobs td:nth-child(1) {
+        width: 17%;
+      }
+      .table-jobs th:nth-child(2),
+      .table-jobs td:nth-child(2) {
+        width: 9%;
+      }
+      .table-jobs th:nth-child(3),
+      .table-jobs td:nth-child(3) {
+        width: 15%;
+      }
+      .table-jobs th:nth-child(4),
+      .table-jobs td:nth-child(4) {
+        width: 9%;
+      }
+      .table-jobs th:nth-child(5),
+      .table-jobs td:nth-child(5),
+      .table-jobs th:nth-child(6),
+      .table-jobs td:nth-child(6),
+      .table-jobs th:nth-child(7),
+      .table-jobs td:nth-child(7) {
+        width: 10%;
+      }
+      .table-jobs th:nth-child(8),
+      .table-jobs td:nth-child(8) {
+        width: 30%;
+      }
+      .error-details {
+        width: 100%;
+      }
+      .error-details summary {
+        display: grid;
+        gap: 4px;
+        cursor: pointer;
+        list-style: none;
+      }
+      .error-details summary::-webkit-details-marker {
+        display: none;
+      }
+      .error-summary {
+        color: var(--danger);
+        font-weight: 700;
+      }
+      .error-meta {
+        color: var(--muted);
+        font-size: 0.74rem;
+      }
+      .error-pre {
+        margin: 10px 0 0;
+        padding: 10px;
+        border-radius: 10px;
+        background: #fff5f2;
+        color: var(--ink);
+        white-space: pre-wrap;
+        word-break: break-word;
+        overflow-wrap: anywhere;
+      }
+      .error-empty {
+        color: var(--muted);
       }
       @media (max-width: 980px) {
         .layout {
@@ -444,6 +508,9 @@ export class HttpServerService {
         }
         .table-wrap {
           max-height: none;
+        }
+        .table-jobs {
+          table-layout: auto;
         }
       }
       @media (max-width: 720px) {
@@ -574,6 +641,28 @@ const renderStatusPill = (status) => {
   return '<span class="pill status-' + escapeHtml(status) + '">' + escapeHtml(status.replaceAll("_", " ")) + "</span>";
 };
 
+const summarizeError = (message) => {
+  const nonEmptyLines = String(message).split("\\n").map((line) => line.trim()).filter(Boolean);
+
+  if (nonEmptyLines.length === 0) {
+    return "Unknown error";
+  }
+
+  return nonEmptyLines[nonEmptyLines.length - 1];
+};
+
+const renderErrorCell = (errorMessage) => {
+  if (!errorMessage) {
+    return "<span class='error-empty'>No error</span>";
+  }
+
+  const errorSummary = summarizeError(errorMessage);
+  return "<details class='error-details'>" +
+    "<summary><span class='error-summary'>" + escapeHtml(errorSummary) + "</span><span class='error-meta'>Expand for full traceback</span></summary>" +
+    "<pre class='error-pre mono'>" + escapeHtml(errorMessage) + "</pre>" +
+    "</details>";
+};
+
 const renderSummary = (summary) => {
   summaryElement.innerHTML = [
     ["Models", summary.modelCount, "Registered model records currently available."],
@@ -611,7 +700,6 @@ const renderJobs = (jobs) => {
   }
 
   jobsElement.innerHTML = jobs.map((job) => {
-    const errorText = job.errorMessage ? escapeHtml(job.errorMessage) : "<span class='muted'>No error</span>";
     return "<tr>" +
       "<td><a class='job-link mono' href='/api/jobs/" + encodeURIComponent(job.jobId) + "' target='_blank' rel='noreferrer'>" + escapeHtml(job.jobId) + "</a></td>" +
       "<td>" + escapeHtml(job.jobType.replaceAll("_", " ")) + "</td>" +
@@ -620,7 +708,7 @@ const renderJobs = (jobs) => {
       "<td>" + formatDate(job.createdAt) + "</td>" +
       "<td>" + formatDate(job.startedAt) + "</td>" +
       "<td>" + formatDate(job.finishedAt) + "</td>" +
-      "<td>" + errorText + "</td>" +
+      "<td>" + renderErrorCell(job.errorMessage) + "</td>" +
       "</tr>";
   }).join("");
 };
