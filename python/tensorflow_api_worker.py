@@ -3,6 +3,7 @@
 import contextlib
 import io
 import json
+import math
 import numbers
 import sys
 import traceback
@@ -20,11 +21,14 @@ TYPE_SAMPLE_LIMIT = 25
 def write_result(result_path: str, payload: dict) -> None:
     target_path = Path(result_path)
     target_path.parent.mkdir(parents=True, exist_ok=True)
-    target_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+    target_path.write_text(
+        json.dumps(sanitize_json_value(payload), indent=2, allow_nan=False),
+        encoding="utf-8",
+    )
 
 
 def write_stdout(payload: dict) -> None:
-    sys.stdout.write(json.dumps(payload))
+    sys.stdout.write(json.dumps(sanitize_json_value(payload), allow_nan=False))
     sys.stdout.flush()
 
 
@@ -192,6 +196,28 @@ def to_serializable_output(value):
         serializable_value = [to_serializable_output(nested_value) for nested_value in value]
 
     return serializable_value
+
+
+def sanitize_json_value(value):
+    sanitized_value = value
+
+    if isinstance(value, dict):
+        sanitized_value = {
+            key: sanitize_json_value(nested_value)
+            for key, nested_value in value.items()
+        }
+    elif isinstance(value, list):
+        sanitized_value = [
+            sanitize_json_value(nested_value) for nested_value in value
+        ]
+    elif isinstance(value, tuple):
+        sanitized_value = [
+            sanitize_json_value(nested_value) for nested_value in value
+        ]
+    elif isinstance(value, float) and not math.isfinite(value):
+        sanitized_value = None
+
+    return sanitized_value
 
 
 def summarize_shape(value):

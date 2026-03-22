@@ -389,6 +389,88 @@ keras = KerasApi()
   writeFileSync(join(moduleRootPath, "tensorflow.py"), moduleSource, "utf8");
 }
 
+function createNonFiniteTensorflowModule(moduleRootPath: string): void {
+  const moduleSource = `__version__ = "fake-tf-1.0.0"
+
+import json
+import math
+from pathlib import Path
+
+
+class FakeArray:
+    def __init__(self, value):
+        self.value = value
+
+    def tolist(self):
+        return self.value
+
+
+def convert_to_tensor(value):
+    return {"converted": True, "value": value}
+
+
+class FakeHistory:
+    def __init__(self, history):
+        self.history = history
+
+
+class FakeModel:
+    def __init__(self, model_kind, config):
+        self.model_kind = model_kind
+        self.config = config
+        self.output_names = config.get("output_names", ["output"])
+
+    def save(self, artifact_path):
+        Path(artifact_path).write_text(
+            json.dumps(
+                {
+                    "config": self.config,
+                    "model_kind": self.model_kind,
+                    "output_names": self.output_names,
+                }
+            ),
+            encoding="utf-8",
+        )
+
+    def fit(self, inputs, targets, validation_data=None, sample_weight=None, **kwargs):
+        return FakeHistory({"loss": [math.nan, math.inf, -math.inf]})
+
+    def predict(self, inputs, verbose=1):
+        return FakeArray([[math.nan, math.inf, -math.inf]])
+
+
+class Sequential:
+    @staticmethod
+    def from_config(config):
+        return FakeModel("sequential", config)
+
+
+class Model:
+    @staticmethod
+    def from_config(config):
+        return FakeModel("functional", config)
+
+
+class ModelsApi:
+    @staticmethod
+    def load_model(artifact_path):
+        saved_model = json.loads(Path(artifact_path).read_text(encoding="utf-8"))
+        model = FakeModel(saved_model["model_kind"], saved_model["config"])
+        model.output_names = saved_model.get("output_names", ["output"])
+        return model
+
+
+class KerasApi:
+    Sequential = Sequential
+    Model = Model
+    models = ModelsApi()
+
+
+keras = KerasApi()
+`;
+  writeFileSync(join(moduleRootPath, "tensorflow.py"), moduleSource, "utf8");
+}
+
 function createStrictInputTensorflowModule(moduleRootPath: string): void {
   const moduleSource = `__version__ = "fake-tf-1.0.0"
 
@@ -954,6 +1036,60 @@ test("python worker prediction stdio stays valid JSON when predict writes ANSI p
 
     assert.equal(resultPayload.status, "predicted");
     assert.deepEqual(resultPayload.outputs, [true, [[5, 6]], 0]);
+  } finally {
+    rmSync(tempRoot, { force: true, recursive: true });
+  }
+});
+
+test("python worker sanitizes non-finite values before writing JSON results", async () => {
+  const tempRoot = mkdtempSync(join(tmpdir(), "tensorflow-worker-test-"));
+  const requestPath = join(tempRoot, "train-request.json");
+  const resultPath = join(tempRoot, "train-result.json");
+  const artifactPath = join(tempRoot, "artifact.keras");
+
+  try {
+    createNonFiniteTensorflowModule(tempRoot);
+    writeFileSync(artifactPath, JSON.stringify({ config: { layers: [] }, model_kind: "sequential" }), "utf8");
+    writeFileSync(
+      requestPath,
+      JSON.stringify({
+        artifactPath,
+        modelId: "worker-model",
+        trainingInput: {
+          inputs: [[1], [2]],
+          targets: [[0], [1]],
+        },
+      }),
+      "utf8",
+    );
+
+    await EXEC_FILE_ASYNC("python3", ["python/tensorflow_api_worker.py", "train-model", requestPath, resultPath], {
+      cwd: "/Users/jc/Documents/GitHub/tensorflow-api",
+      env: { ...process.env, PYTHONPATH: tempRoot },
+    });
+
+    const resultFileContent = readFileSync(resultPath, "utf8");
+    const resultPayload = JSON.parse(resultFileContent) as {
+      history: Record<string, Array<number | null>>;
+      status: string;
+    };
+    const predictionPayload = (await executePredictionOverStdio(tempRoot, {
+      artifactPath,
+      modelId: "worker-model",
+      predictionInput: {
+        inputs: [[5]],
+      },
+    })) as {
+      outputs: Array<Array<number | null>>;
+      status: string;
+    };
+
+    assert.equal(resultFileContent.includes("NaN"), false);
+    assert.equal(resultFileContent.includes("Infinity"), false);
+    assert.equal(resultPayload.status, "trained");
+    assert.deepEqual(resultPayload.history.loss, [null, null, null]);
+    assert.equal(predictionPayload.status, "predicted");
+    assert.deepEqual(predictionPayload.outputs, [[null, null, null]]);
   } finally {
     rmSync(tempRoot, { force: true, recursive: true });
   }

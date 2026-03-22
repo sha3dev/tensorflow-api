@@ -158,6 +158,21 @@ print(json.dumps(payload))
 
 `trainingInput.sampleWeights` and `trainingInput.validationSampleWeights` accept either a numeric array or an object keyed by output name. `modelMetadata` replaces the persisted model metadata only after a training job succeeds.
 
+Input tensor normalization rules:
+
+- `trainingInput.inputs` and `trainingInput.validationInputs` go through an input-specific normalization step before `tf.convert_to_tensor(...)`.
+- Numeric scalars are normalized to Python `float`, so mixed numeric JSON such as `1` and `2.5` becomes a homogeneous float tensor input.
+- `null` inside numeric inputs is normalized to `NaN`, which lets upstream clients represent missing numeric values without breaking tensor conversion.
+- This normalization is intentionally limited to model inputs. It does not rewrite `targets`, `sampleWeights`, or `validationSampleWeights`.
+- Multi-output keyed structures are preserved as keyed structures until the worker aligns them to the model's real Keras output names.
+- If the resulting structure still cannot be converted to a tensor, the failed job diagnostics include compact `inputShape`, `inputTypes`, `validationInputShape`, and `validationInputTypes` summaries.
+
+Practical implications:
+
+- `[1, 2.5, 3]` is accepted and converted as floats.
+- `[[1, null], [3, 4.25]]` is accepted and converted with `null -> NaN`.
+- `[[1, "bad"], [3, 4]]` still fails, and should fail, because that is not a numeric tensor input.
+
 Current `fitConfig` keys supported by the worker:
 
 - `epochs`
@@ -803,6 +818,12 @@ type TrainingInputSummary = {
   validationSampleWeightShapes: ShapeSummary | null;
 };
 ```
+
+Notes:
+
+- `inputShape` and `validationInputShape` summarize only the nested array sizes seen in the request.
+- `inputTypes` and `validationInputTypes` summarize scalar types such as `float`, `int`, `null`, or mixed combinations like `int|str`.
+- The worker does not persist full raw input payloads in diagnostics; it persists only compact summaries so failures remain debuggable without storing giant tensors.
 
 ### `ShapeSummary`
 
