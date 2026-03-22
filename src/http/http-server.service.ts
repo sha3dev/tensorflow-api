@@ -204,7 +204,7 @@ export class HttpServerService {
       main {
         max-width: 1460px;
         margin: 0 auto;
-        padding: 16px 16px 28px;
+        padding: 14px 14px 22px;
       }
       a {
         color: inherit;
@@ -222,7 +222,7 @@ export class HttpServerService {
         grid-template-columns: minmax(0, 1fr) auto;
         gap: 10px 16px;
         align-items: center;
-        padding: 12px 14px;
+        padding: 10px 12px;
         border-radius: 14px;
         background: var(--surface-soft);
         border: 1px solid var(--line);
@@ -233,13 +233,13 @@ export class HttpServerService {
         gap: 2px;
       }
       .toolbar-title h1 {
-        font-size: 1rem;
+        font-size: 0.95rem;
         font-weight: 700;
         letter-spacing: -0.02em;
       }
       .toolbar-note {
         color: var(--muted);
-        font-size: 0.85rem;
+        font-size: 0.8rem;
       }
       .cards {
         display: grid;
@@ -253,7 +253,7 @@ export class HttpServerService {
         border-radius: 14px;
       }
       .card {
-        padding: 12px 14px;
+        padding: 10px 12px;
         box-shadow: var(--shadow);
       }
       .card-label {
@@ -266,13 +266,13 @@ export class HttpServerService {
       .card strong {
         display: block;
         margin-top: 8px;
-        font-size: 2rem;
+        font-size: 1.75rem;
         letter-spacing: -0.04em;
       }
       .card-foot {
         margin-top: 4px;
         color: var(--muted);
-        font-size: 0.8rem;
+        font-size: 0.75rem;
       }
       .layout {
         display: grid;
@@ -288,18 +288,18 @@ export class HttpServerService {
         justify-content: space-between;
         gap: 8px;
         align-items: center;
-        padding: 12px 14px 10px;
+        padding: 10px 12px 8px;
         border-bottom: 1px solid var(--line);
         background: var(--surface-soft);
       }
       .panel-title {
-        font-size: 0.95rem;
+        font-size: 0.9rem;
         font-weight: 700;
         letter-spacing: -0.01em;
       }
       .panel-note {
         color: var(--muted);
-        font-size: 0.8rem;
+        font-size: 0.76rem;
       }
       .table-wrap {
         overflow: auto;
@@ -312,7 +312,9 @@ export class HttpServerService {
       }
       th,
       td {
-        padding: 10px 12px;
+        padding: 8px 10px;
+        font-size: 0.82rem;
+        line-height: 1.25;
         border-bottom: 1px solid var(--line);
         text-align: left;
         vertical-align: top;
@@ -338,7 +340,7 @@ export class HttpServerService {
       button {
         border: 0;
         border-radius: 10px;
-        padding: 9px 14px;
+        padding: 7px 11px;
         background: var(--accent);
         color: #fff;
         font: inherit;
@@ -356,10 +358,10 @@ export class HttpServerService {
       .pill {
         display: inline-flex;
         align-items: center;
-        gap: 6px;
-        padding: 5px 8px;
+        gap: 5px;
+        padding: 4px 7px;
         border-radius: 999px;
-        font-size: 11px;
+        font-size: 10px;
         font-weight: 700;
         letter-spacing: 0.02em;
         text-transform: uppercase;
@@ -400,13 +402,13 @@ export class HttpServerService {
       }
       .secondary {
         display: block;
-        margin-top: 2px;
+        margin-top: 1px;
         color: var(--muted);
-        font-size: 0.78rem;
+        font-size: 0.72rem;
       }
       .cell-stack {
         display: grid;
-        gap: 3px;
+        gap: 2px;
         min-width: 0;
       }
       .cell-primary {
@@ -414,7 +416,7 @@ export class HttpServerService {
       }
       .cell-note {
         color: var(--muted);
-        font-size: 0.74rem;
+        font-size: 0.7rem;
       }
       .break-anywhere {
         overflow-wrap: anywhere;
@@ -422,16 +424,16 @@ export class HttpServerService {
       }
       .mono {
         font-family: "SFMono-Regular", "Menlo", monospace;
-        font-size: 0.76rem;
+        font-size: 0.7rem;
       }
       .feedback {
         min-height: 18px;
         color: var(--muted);
-        font-size: 0.82rem;
+        font-size: 0.76rem;
         text-align: right;
       }
       .empty {
-        padding: 18px 12px;
+        padding: 14px 10px;
         color: var(--muted);
         text-align: center;
       }
@@ -440,8 +442,10 @@ export class HttpServerService {
       }
       .table-compact td,
       .table-compact th {
-        padding-right: 10px;
-        padding-left: 10px;
+        padding-top: 6px;
+        padding-bottom: 6px;
+        padding-right: 8px;
+        padding-left: 8px;
       }
       .table-jobs {
         table-layout: fixed;
@@ -450,37 +454,35 @@ export class HttpServerService {
       .table-main th:nth-child(1),
       .table-jobs td:nth-child(1),
       .table-jobs th:nth-child(1),
-      .table-jobs td:nth-child(8),
-      .table-jobs th:nth-child(8) {
+      .table-jobs td:nth-child(7),
+      .table-jobs th:nth-child(7) {
         white-space: normal;
       }
       .table-jobs th:nth-child(1),
       .table-jobs td:nth-child(1) {
-        width: 16%;
+        width: 11%;
       }
       .table-jobs th:nth-child(2),
       .table-jobs td:nth-child(2) {
-        width: 9%;
+        width: 18%;
       }
       .table-jobs th:nth-child(3),
       .table-jobs td:nth-child(3) {
-        width: 16%;
+        width: 10%;
       }
       .table-jobs th:nth-child(4),
       .table-jobs td:nth-child(4) {
-        width: 9%;
+        width: 11%;
       }
       .table-jobs th:nth-child(5),
       .table-jobs td:nth-child(5),
       .table-jobs th:nth-child(6),
-      .table-jobs td:nth-child(6),
+      .table-jobs td:nth-child(6) {
+        width: 11%;
+      }
       .table-jobs th:nth-child(7),
       .table-jobs td:nth-child(7) {
-        width: 9%;
-      }
-      .table-jobs th:nth-child(8),
-      .table-jobs td:nth-child(8) {
-        width: 32%;
+        width: 28%;
       }
       .error-details {
         width: 100%;
@@ -500,11 +502,11 @@ export class HttpServerService {
       }
       .error-meta {
         color: var(--muted);
-        font-size: 0.74rem;
+        font-size: 0.68rem;
       }
       .error-pre {
-        margin: 10px 0 0;
-        padding: 10px;
+        margin: 8px 0 0;
+        padding: 8px;
         border-radius: 10px;
         background: #fff5f2;
         color: var(--ink);
@@ -594,7 +596,6 @@ export class HttpServerService {
         <table class="table-compact table-jobs">
           <thead>
             <tr>
-              <th>Job</th>
               <th>Type</th>
               <th>Model</th>
               <th>Status</th>
@@ -736,13 +737,12 @@ const renderModels = (models) => {
 
 const renderJobs = (jobs) => {
   if (jobs.length === 0) {
-    jobsElement.innerHTML = "<tr><td class='empty' colspan='8'>No jobs have been recorded yet.</td></tr>";
+    jobsElement.innerHTML = "<tr><td class='empty' colspan='7'>No jobs have been recorded yet.</td></tr>";
     return;
   }
 
   jobsElement.innerHTML = jobs.map((job) => {
     return "<tr>" +
-      "<td>" + renderIdentifierCell(job.jobId, "/api/jobs/" + encodeURIComponent(job.jobId), null) + "</td>" +
       "<td>" + escapeHtml(job.jobType.replaceAll("_", " ")) + "</td>" +
       "<td>" + renderIdentifierCell(job.modelId, "/api/models/" + encodeURIComponent(job.modelId), null) + "</td>" +
       "<td>" + renderStatusPill(job.status) + "</td>" +

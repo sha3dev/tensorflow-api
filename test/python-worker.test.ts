@@ -393,6 +393,7 @@ function createStrictInputTensorflowModule(moduleRootPath: string): void {
   const moduleSource = `__version__ = "fake-tf-1.0.0"
 
 import json
+import math
 from pathlib import Path
 
 
@@ -412,10 +413,25 @@ def convert_to_tensor(value):
     if "str" in scalar_types and len(scalar_types) > 1:
         raise ValueError("Can't convert Python sequence with mixed types to Tensor")
 
-    if "int" in scalar_types and "float" in scalar_types:
+    if "NoneType" in scalar_types and len(scalar_types - {"NoneType"}) > 0:
         raise ValueError("Can't convert Python sequence with mixed types to Tensor")
 
-    return {"converted": True, "value": value}
+    return {"converted": True, "value": _serialize_value(value)}
+
+
+def _serialize_value(value):
+    if isinstance(value, float) and math.isnan(value):
+        return "__nan__"
+    if isinstance(value, list):
+        return [_serialize_value(nested_value) for nested_value in value]
+    if isinstance(value, tuple):
+        return [_serialize_value(nested_value) for nested_value in value]
+    if isinstance(value, dict):
+        return {
+            key: _serialize_value(nested_value)
+            for key, nested_value in value.items()
+        }
+    return value
 
 
 class FakeHistory:
@@ -549,8 +565,8 @@ test("python worker normalizes mixed numeric training inputs before tensor conve
             [3, 4.25],
           ],
           sampleWeights: {
-            classification: [2, 0.5],
-            regression: [1, 1],
+            classification: [2.0, 0.5],
+            regression: [1.0, 1.0],
           },
           targets: {
             classification: [
@@ -589,6 +605,75 @@ test("python worker normalizes mixed numeric training inputs before tensor conve
         converted: true,
         value: [
           [1.0, 2.5],
+          [3.0, 4.25],
+        ],
+      },
+    ]);
+  } finally {
+    rmSync(tempRoot, { force: true, recursive: true });
+  }
+});
+
+test("python worker normalizes nullable numeric training inputs before tensor conversion", async () => {
+  const tempRoot = mkdtempSync(join(tmpdir(), "tensorflow-worker-test-"));
+  const requestPath = join(tempRoot, "train-request.json");
+  const resultPath = join(tempRoot, "train-result.json");
+  const artifactPath = join(tempRoot, "artifact.keras");
+
+  try {
+    createStrictInputTensorflowModule(tempRoot);
+    writeFileSync(artifactPath, JSON.stringify({ config: { layers: [] }, model_kind: "functional", output_names: ["regression", "classification"] }), "utf8");
+    writeFileSync(
+      requestPath,
+      JSON.stringify({
+        artifactPath,
+        modelId: "worker-model",
+        trainingInput: {
+          inputs: [
+            [1, null],
+            [3, 4.25],
+          ],
+          sampleWeights: {
+            classification: [2.0, 0.5],
+            regression: [1.0, 1.0],
+          },
+          targets: {
+            classification: [
+              [1, 0],
+              [0, 1],
+            ],
+            regression: [[0.1], [0.2]],
+          },
+          validationInputs: [[5, null]],
+          validationSampleWeights: {
+            classification: [0.75],
+            regression: [0.25],
+          },
+          validationTargets: {
+            classification: [[1, 0]],
+            regression: [[0.3]],
+          },
+        },
+      }),
+      "utf8",
+    );
+
+    await EXEC_FILE_ASYNC("python3", ["python/tensorflow_api_worker.py", "train-model", requestPath, resultPath], {
+      cwd: "/Users/jc/Documents/GitHub/tensorflow-api",
+      env: { ...process.env, PYTHONPATH: tempRoot },
+    });
+
+    const resultPayload = JSON.parse(readFileSync(resultPath, "utf8")) as {
+      history: Record<string, unknown[]>;
+      status: string;
+    };
+
+    assert.equal(resultPayload.status, "trained");
+    assert.deepEqual(resultPayload.history.inputs, [
+      {
+        converted: true,
+        value: [
+          [1.0, "__nan__"],
           [3.0, 4.25],
         ],
       },

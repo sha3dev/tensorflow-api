@@ -87,7 +87,7 @@ def normalize_compile_config(model, raw_compile_config: dict) -> dict:
 
 
 def to_tensor(tf_module, value):
-    tensor_value = tf_module.convert_to_tensor(normalize_numeric_structure(value))
+    tensor_value = tf_module.convert_to_tensor(value)
     return tensor_value
 
 
@@ -103,6 +103,47 @@ def to_tensor_structure(tf_module, value):
         tensor_structure = to_tensor(tf_module, value)
 
     return tensor_structure
+
+
+def to_input_tensor(tf_module, value):
+    tensor_value = tf_module.convert_to_tensor(normalize_input_numeric_structure(value))
+    return tensor_value
+
+
+def to_input_tensor_structure(tf_module, value):
+    tensor_structure = None
+
+    if isinstance(value, dict):
+        tensor_structure = {}
+
+        for key, nested_value in value.items():
+            tensor_structure[key] = to_input_tensor_structure(tf_module, nested_value)
+    else:
+        tensor_structure = to_input_tensor(tf_module, value)
+
+    return tensor_structure
+
+
+def normalize_input_numeric_structure(value):
+    normalized_value = value
+
+    if isinstance(value, dict):
+        normalized_value = {
+            key: normalize_input_numeric_structure(nested_value)
+            for key, nested_value in value.items()
+        }
+    elif isinstance(value, (list, tuple)):
+        normalized_value = [
+            normalize_input_numeric_structure(nested_value) for nested_value in value
+        ]
+    elif value is None:
+        normalized_value = float("nan")
+    elif isinstance(value, bool):
+        normalized_value = float(value)
+    elif isinstance(value, numbers.Real):
+        normalized_value = float(value)
+
+    return normalized_value
 
 
 def normalize_numeric_structure(value):
@@ -363,11 +404,11 @@ def build_validation_data(tf_module, model, training_input: dict):
             tf_module, model, training_input["validationTargets"]
         )
         validation_data = (
-            to_tensor_structure(tf_module, training_input["validationInputs"]),
+            to_input_tensor_structure(tf_module, training_input["validationInputs"]),
             validation_targets,
             validation_sample_weights,
         ) if validation_sample_weights is not None else (
-            to_tensor_structure(tf_module, training_input["validationInputs"]),
+            to_input_tensor_structure(tf_module, training_input["validationInputs"]),
             validation_targets,
         )
 
@@ -414,7 +455,7 @@ def train_model(payload: dict, result_path: str) -> None:
     diagnostics = build_training_diagnostics(model, training_input)
 
     try:
-        tensor_inputs = to_tensor_structure(tf, training_input["inputs"])
+        tensor_inputs = to_input_tensor_structure(tf, training_input["inputs"])
         tensor_targets = build_fit_targets(tf, model, training_input)
         sample_weight = build_sample_weights(tf, model, training_input, "sampleWeights")
         validation_data = build_validation_data(tf, model, training_input)
@@ -462,7 +503,7 @@ def predict_model_to_stdout(payload: dict) -> None:
 
     with contextlib.redirect_stdout(io.StringIO()):
         prediction_output = model.predict(
-            to_tensor_structure(tf, prediction_input["inputs"]), verbose=0
+            to_input_tensor_structure(tf, prediction_input["inputs"]), verbose=0
         )
 
     write_stdout(
